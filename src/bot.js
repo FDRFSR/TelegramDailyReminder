@@ -12,6 +12,7 @@ const googleCalendar = require('./services/calendar/googleCalendarService');
 const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
+const sessionService = require('./services/sessionService');
 
 // Load environment variables
 dotenv.config();
@@ -162,6 +163,102 @@ async function runMigrations() {
 
   logger.info('Telegram Daily Reminder Bot started.');
 })();
+
+// /add command con scelta categoria tramite pulsanti inline
+bot.command('add', async (ctx) => {
+  try {
+    await sessionService.setUserSession(String(ctx.from.id), { add_category: null });
+    await ctx.reply('Scegli la categoria del promemoria:', {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '🧑‍💼 Lavoro', callback_data: 'addcat_work' },
+            { text: '🏠 Personale', callback_data: 'addcat_personal' }
+          ]
+        ]
+      }
+    });
+  } catch (err) {
+    logger.error('Errore in /add:', err);
+    ctx.reply('❌ Errore interno.');
+  }
+});
+
+// /list command con pulsanti azione e filtri
+bot.command('list', async (ctx) => {
+  try {
+    const db = getDb();
+    const userId = String(ctx.from.id);
+    const session = await sessionService.getUserSession(userId);
+    const category = session.filter_category;
+    let query = 'SELECT * FROM reminders WHERE user_id = $1';
+    const params = [userId];
+    if (category) {
+      query += ' AND category = $2';
+      params.push(category);
+    }
+    query += ' ORDER BY date, time';
+    const res = await db.query(query, params);
+    if (!res.rows.length) {
+      await ctx.reply('Nessun promemoria trovato.');
+      return;
+    }
+    // Pulsanti filtro
+    const filterButtons = [
+      [
+        { text: 'Tutti', callback_data: 'filter_all' },
+        { text: 'Lavoro', callback_data: 'filter_work' },
+        { text: 'Personale', callback_data: 'filter_personal' }
+      ]
+    ];
+    // Lista promemoria con pulsanti azione
+    for (const r of res.rows) {
+      const buttons = [
+        [
+          { text: '✅ Fatto', callback_data: `done_${r.id}` },
+          { text: '🗑️ Elimina', callback_data: `delete_${r.id}` },
+          { text: '✏️ Modifica', callback_data: `edit_${r.id}` }
+        ]
+      ];
+      await ctx.replyWithHTML(
+        `<b>${r.time}</b> - ${r.text} [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
+        { reply_markup: { inline_keyboard: buttons } }
+      );
+    }
+    // Mostra i filtri in alto
+    await ctx.reply('Filtra per categoria:', { reply_markup: { inline_keyboard: filterButtons } });
+  } catch (err) {
+    logger.error('Errore in /list:', err);
+    ctx.reply('❌ Errore interno.');
+  }
+});
+
+// /delete command con elenco e pulsanti elimina
+bot.command('delete', async (ctx) => {
+  try {
+    const db = getDb();
+    const userId = String(ctx.from.id);
+    const res = await db.query('SELECT * FROM reminders WHERE user_id = $1 ORDER BY date, time', [userId]);
+    if (!res.rows.length) {
+      await ctx.reply('Nessun promemoria da eliminare.');
+      return;
+    }
+    for (const r of res.rows) {
+      const buttons = [
+        [
+          { text: '🗑️ Elimina', callback_data: `delete_${r.id}` }
+        ]
+      ];
+      await ctx.replyWithHTML(
+        `<b>${r.time}</b> - ${r.text} [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
+        { reply_markup: { inline_keyboard: buttons } }
+      );
+    }
+  } catch (err) {
+    logger.error('Errore in /delete:', err);
+    ctx.reply('❌ Errore interno.');
+  }
+});
 
 // Graceful stop
 let isShuttingDown = false;

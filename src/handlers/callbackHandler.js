@@ -4,6 +4,7 @@
 const messages = require('../messages');
 const logger = require('../utils/logger');
 const { getDb } = require('../db');
+const sessionService = require('../services/sessionService');
 
 // Simple in-memory rate limiter (per user, per callback data)
 const rateLimitMap = new Map();
@@ -81,7 +82,35 @@ async function handleCallback(ctx) {
       await ctx.answerCbQuery(messages.reminderNotFound);
       return;
     }
-  } else {
+  } 
+  // Gestione scelta categoria in /add
+  else if (data.startsWith('addcat_')) {
+    const category = data.replace('addcat_', '');
+    await sessionService.setUserSession(String(userId), { add_category: category });
+    await ctx.reply('Scrivi il testo del promemoria (es: "Chiamare Mario alle 10")');
+    await ctx.answerCbQuery('Categoria selezionata!');
+    return;
+  }
+
+  // Gestione filtri in /list
+  else if (data.startsWith('filter_')) {
+    const filter = data.replace('filter_', '');
+    await sessionService.setUserSession(String(userId), { filter_category: filter === 'all' ? null : filter });
+    await ctx.reply(`Filtro applicato: ${filter === 'all' ? 'Tutti' : filter}`);
+    // Triggera /list per mostrare i risultati filtrati
+    await ctx.telegram.sendMessage(ctx.from.id, '/list');
+    await ctx.answerCbQuery('Filtro applicato!');
+    return;
+  }
+
+  // Gestione modifica (stub)
+  else if (data.startsWith('edit_')) {
+    const reminderId = data.replace('edit_', '');
+    await ctx.reply('Funzione di modifica in sviluppo.');
+    await ctx.answerCbQuery('Modifica non ancora disponibile.');
+    return;
+  } 
+  else {
     logger.warn(`[${userId}] Callback non riconosciuta: ${data}`);
     await ctx.answerCbQuery(messages.actionUnknown);
     return;
