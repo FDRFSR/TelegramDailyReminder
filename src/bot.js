@@ -64,7 +64,17 @@ async function runMigrations() {
         'INSERT INTO users (id, first_name, username) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING',
         [userId, ctx.from.first_name || '', ctx.from.username || '']
       );
-      await ctx.reply(messages.onboarding, { parse_mode: 'HTML' });
+      await ctx.reply(messages.onboarding, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '➕ Crea promemoria', callback_data: 'addcat_work' },
+              { text: '📋 Vedi lista', callback_data: 'show_list' }
+            ]
+          ]
+        }
+      });
     } catch (err) {
       logger.error('Errore in /start:', err);
       ctx.reply(messages.errorInternal);
@@ -73,6 +83,12 @@ async function runMigrations() {
 
   // Gestione callback dei pulsanti inline
   bot.on('callback_query', handleCallback);
+
+  // Gestione callback per pulsante "Vedi lista"
+  bot.action('show_list', async (ctx) => {
+    await ctx.answerCbQuery();
+    await ctx.telegram.sendMessage(ctx.from.id, '/list');
+  });
 
   // === TODO: INTEGRAZIONE FEATURE PRINCIPALI E AVANZATE ===
   // 1. Notifiche giornaliere automatiche
