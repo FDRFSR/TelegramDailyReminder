@@ -296,27 +296,16 @@ bot.on('text', async (ctx, next) => {
   const session = await sessionService.getUserSession(userId);
   // Se l'utente è nel flusso guidato di aggiunta (ha scelto categoria ma non ancora inserito testo)
   if (session && session.add_category && !ctx.message.text.startsWith('/')) {
-    // Chiedi l'orario del promemoria
     const text = ctx.message.text.trim();
-    // Chiedi l'orario se non già chiesto
-    await sessionService.setUserSession(userId, { add_category: session.add_category, add_text: text });
-    await ctx.reply('A che ora vuoi ricevere il promemoria? (Formato HH:MM, es: 09:30)');
-    return;
-  }
-  // Se l'utente ha già inserito testo e ora, salva il promemoria
-  if (session && session.add_category && session.add_text && /^\d{1,2}:\d{2}$/.test(ctx.message.text.trim())) {
-    const time = ctx.message.text.trim();
-    const text = session.add_text;
-    const category = session.add_category;
-    // Salva nel DB
+    // Salva direttamente il promemoria senza chiedere orario/giorno
     const db = getDb();
     const res = await db.query(
-      'INSERT INTO reminders (user_id, text, time, category) VALUES ($1, $2, $3, $4) RETURNING id',
-      [userId, text, time, category]
+      'INSERT INTO reminders (user_id, text, category) VALUES ($1, $2, $3) RETURNING id',
+      [userId, text, session.add_category]
     );
     const reminderId = res.rows[0].id;
     await ctx.reply(
-      `✅ Promemoria aggiunto: <b>${time}</b> - ${text} [${category}]`,
+      `✅ Promemoria aggiunto: <b>${text}</b> [${session.add_category}]`,
       {
         parse_mode: 'HTML',
         reply_markup: {
