@@ -8,6 +8,7 @@ const { setupDatabase, getDb } = require('./db');
 const messages = require('./messages');
 const logger = require('./utils/logger');
 const handleCallback = require('./handlers/callbackHandler');
+const googleCalendar = require('./services/calendar/googleCalendarService');
 
 // Load environment variables
 dotenv.config();
@@ -54,8 +55,30 @@ startDailyNotifications(bot); // Avvia scheduler notifiche
 // const i18n = require('./i18n'); // Middleware e funzioni già stub
 
 // 3. Integrazione Google/Outlook Calendar
-// const googleCalendar = require('./services/calendar/googleCalendarService');
+
 // const outlookCalendar = require('./services/calendar/outlookCalendarService');
+
+// Comando /gcal_auth per avviare autenticazione Google Calendar
+bot.command('gcal_auth', async (ctx) => {
+  try {
+    const userId = String(ctx.from.id);
+    await googleCalendar.authenticate(userId, ctx);
+  } catch (err) {
+    logger.error('Errore in /gcal_auth:', err);
+    ctx.reply('❌ Errore durante autenticazione Google Calendar.');
+  }
+});
+
+// Comando /gcal_sync per sincronizzare i reminder
+bot.command('gcal_sync', async (ctx) => {
+  try {
+    const userId = String(ctx.from.id);
+    await googleCalendar.syncReminders(userId, ctx);
+  } catch (err) {
+    logger.error('Errore in /gcal_sync:', err);
+    ctx.reply('❌ Errore durante la sincronizzazione con Google Calendar.');
+  }
+});
 
 // 4. Gestione ricorrenze
 // const recurringService = require('./services/recurringService');
@@ -66,20 +89,41 @@ startDailyNotifications(bot); // Avvia scheduler notifiche
 // TODO: Usare getUserTimezone/setUserTimezone dove serve
 
 // 6. Statistiche e analytics
-// const statisticsService = require('./services/statisticsService');
-// const monitoring = require('./monitoring');
+const statisticsService = require('./services/statisticsService');
+const monitoring = require('./monitoring');
 
-// 7. Reminder condivisi (gruppi)
-// const groupService = require('./services/groupService');
-
-// 8. Attachments
-// const attachmentService = require('./services/attachmentService');
-
-// 9. Smart suggestions e template
-// const smartSuggestionService = require('./services/smartSuggestionService');
+// Comando /stats per mostrare statistiche utente
+bot.command('stats', async (ctx) => {
+  try {
+    const userId = String(ctx.from.id);
+    const stats = await statisticsService.getUserStats(userId);
+    if (!stats || Object.keys(stats).length === 0) {
+      await ctx.reply('📊 Nessuna statistica disponibile.');
+      return;
+    }
+    let msg = '📊 <b>Statistiche promemoria</b>\n';
+    if (stats.completed !== undefined) msg += `Completati: <b>${stats.completed}</b>\n`;
+    if (stats.pending !== undefined) msg += `Da completare: <b>${stats.pending}</b>\n`;
+    if (stats.weekly !== undefined) msg += `Ultimi 7 giorni: <b>${stats.weekly}</b>\n`;
+    await ctx.reply(msg, { parse_mode: 'HTML' });
+  } catch (err) {
+    monitoring.captureError(err, { command: '/stats' });
+    ctx.reply('❌ Errore durante il recupero delle statistiche.');
+  }
+});
 
 // 10. Voice message
-// const voiceService = require('./services/voiceService');
+const voiceService = require('./services/voiceService');
+bot.on('voice', async (ctx) => {
+  try {
+    const userId = String(ctx.from.id);
+    const voiceFile = ctx.message.voice;
+    await voiceService.processVoiceMessage(userId, voiceFile, ctx);
+  } catch (err) {
+    monitoring.captureError(err, { event: 'voice' });
+    ctx.reply('❌ Errore durante la gestione del messaggio vocale.');
+  }
+});
 
 // 11. Backup e disaster recovery
 // const backup = require('./backup');

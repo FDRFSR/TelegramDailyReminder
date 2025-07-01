@@ -1,6 +1,8 @@
 // src/services/reminderService.js
 // Business logic for managing reminders
 
+const { getDb } = require('../db');
+
 module.exports = {
   // Crea un nuovo promemoria (mock, da implementare con DB)
   async createReminder(userId, time, text, category) {
@@ -25,9 +27,16 @@ module.exports = {
     // TODO: update DB
     return true;
   },
-  // Ottieni promemoria scaduti/non completati (mock)
+  // Ottieni promemoria scaduti/non completati dal DB
   async getOverdueReminders(userId) {
-    // TODO: fetch dal DB
-    return [];
+    const db = getDb();
+    // Prendi tutti i reminder di oggi o precedenti non completati
+    const res = await db.query(
+      `SELECT id, time, text, category, completed FROM reminders
+       WHERE user_id = $1 AND (date <= CURRENT_DATE) AND completed = FALSE
+       ORDER BY date, time`,
+      [userId]
+    );
+    return res.rows;
   }
 };
