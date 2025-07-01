@@ -347,10 +347,12 @@ bot.on('text', async (ctx, next) => {
   if (session && session.add_category && !ctx.message.text.startsWith('/')) {
     const text = ctx.message.text.trim();
     // Salva direttamente il promemoria senza chiedere orario/giorno
+    // Imposta un orario di default (es: 08:00) per rispettare il vincolo NOT NULL
+    const defaultTime = '08:00';
     const db = getDb();
     const res = await db.query(
-      'INSERT INTO reminders (user_id, text, category) VALUES ($1, $2, $3) RETURNING id',
-      [userId, text, session.add_category]
+      'INSERT INTO reminders (user_id, text, category, time) VALUES ($1, $2, $3, $4) RETURNING id',
+      [userId, text, session.add_category, defaultTime]
     );
     const reminderId = res.rows[0].id;
     await ctx.reply(
