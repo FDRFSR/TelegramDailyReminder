@@ -46,16 +46,17 @@ async function handleCallback(ctx) {
       await ctx.answerCbQuery(messages.callbackInvalid);
       return;
     }
-    const result = await db.query('UPDATE reminders SET completed = TRUE WHERE id = $1 AND user_id = $2 RETURNING id', [reminderId, String(userId)]);
+    // Cancella il promemoria completato
+    const result = await db.query('DELETE FROM reminders WHERE id = $1 AND user_id = $2 RETURNING id', [reminderId, String(userId)]);
     if (result.rowCount > 0) {
-      logger.info(`[${userId}] Promemoria ${reminderId} segnato come fatto`);
+      logger.info(`[${userId}] Promemoria ${reminderId} completato e cancellato`);
       try {
         await ctx.editMessageReplyMarkup();
       } catch (e) {}
-      await ctx.answerCbQuery(messages.reminderDone);
+      await ctx.answerCbQuery('Promemoria completato e rimosso!');
       return;
     } else {
-      logger.warn(`[${userId}] Promemoria ${reminderId} non trovato o già completato`);
+      logger.warn(`[${userId}] Promemoria ${reminderId} non trovato per completamento/cancellazione`);
       await ctx.answerCbQuery(messages.reminderNotFound);
       return;
     }
