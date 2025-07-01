@@ -87,7 +87,56 @@ async function runMigrations() {
   // Gestione callback per pulsante "Vedi lista"
   bot.action('show_list', async (ctx) => {
     await ctx.answerCbQuery();
-    await ctx.telegram.sendMessage(ctx.from.id, '/list');
+    // Invia la lista direttamente, non solo il comando
+    const db = getDb();
+    const userId = String(ctx.from.id);
+    const session = await sessionService.getUserSession(userId);
+    const category = session.filter_category;
+    let query = 'SELECT * FROM reminders WHERE user_id = $1';
+    const params = [userId];
+    if (category) {
+      query += ' AND category = $2';
+      params.push(category);
+    }
+    query += ' ORDER BY date, time';
+    const res = await db.query(query, params);
+    if (!res.rows.length) {
+      await ctx.reply('Nessun promemoria trovato. Puoi aggiungerne uno:', {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '➕ Aggiungi promemoria Lavoro', callback_data: 'addcat_work' },
+              { text: '➕ Aggiungi promemoria Personale', callback_data: 'addcat_personal' }
+            ]
+          ]
+        }
+      });
+      return;
+    }
+    // Pulsanti filtro
+    const filterButtons = [
+      [
+        { text: 'Tutti', callback_data: 'filter_all' },
+        { text: 'Lavoro', callback_data: 'filter_work' },
+        { text: 'Personale', callback_data: 'filter_personal' }
+      ]
+    ];
+    // Lista promemoria con pulsanti azione
+    for (const r of res.rows) {
+      const buttons = [
+        [
+          { text: '✅ Fatto', callback_data: `done_${r.id}` },
+          { text: '🗑️ Elimina', callback_data: `delete_${r.id}` },
+          { text: '✏️ Modifica', callback_data: `edit_${r.id}` }
+        ]
+      ];
+      await ctx.replyWithHTML(
+        `<b>${r.time || ''}</b> - ${r.text} [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
+        { reply_markup: { inline_keyboard: buttons } }
+      );
+    }
+    // Mostra i filtri in alto
+    await ctx.reply('Filtra per categoria:', { reply_markup: { inline_keyboard: filterButtons } });
   });
 
   // === TODO: INTEGRAZIONE FEATURE PRINCIPALI E AVANZATE ===
