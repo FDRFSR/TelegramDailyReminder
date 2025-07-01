@@ -39,7 +39,7 @@ async function handleCallback(ctx) {
 
   // Validazione utente (opzionale: qui si assume che l'utente sia già registrato)
 
-  // Gestione callback
+  // Gestione callback done_ (completa)
   if (data.startsWith('done_')) {
     const [, reminderId] = data.split('_');
     if (!reminderId || isNaN(reminderId)) {
@@ -51,9 +51,7 @@ async function handleCallback(ctx) {
       logger.info(`[${userId}] Promemoria ${reminderId} segnato come fatto`);
       try {
         await ctx.editMessageReplyMarkup();
-      } catch (e) {
-        // Messaggio già modificato
-      }
+      } catch (e) {}
       await ctx.answerCbQuery(messages.reminderDone);
       return;
     } else {
@@ -112,7 +110,6 @@ async function handleCallback(ctx) {
   } 
   // Gestione callback per pulsante "Vedi lista"
   else if (data === 'show_list') {
-    // Mostra la lista direttamente (stessa logica del bot.action in bot.js)
     const session = await sessionService.getUserSession(userId);
     const category = session.filter_category;
     let query = 'SELECT * FROM reminders WHERE user_id = $1';
@@ -124,43 +121,21 @@ async function handleCallback(ctx) {
     query += ' ORDER BY date, time';
     const res = await db.query(query, params);
     if (!res.rows.length) {
-      await ctx.reply('Nessun promemoria trovato. Puoi aggiungerne uno:', {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '➕ Aggiungi promemoria Lavoro', callback_data: 'addcat_work' },
-              { text: '➕ Aggiungi promemoria Personale', callback_data: 'addcat_personal' }
-            ]
-          ]
-        }
-      });
+      await ctx.reply('Nessun promemoria trovato.');
       await ctx.answerCbQuery();
       return;
     }
-    // Pulsanti filtro
-    const filterButtons = [
-      [
-        { text: 'Tutti', callback_data: 'filter_all' },
-        { text: 'Lavoro', callback_data: 'filter_work' },
-        { text: 'Personale', callback_data: 'filter_personal' }
-      ]
-    ];
-    // Lista promemoria con pulsanti azione
     for (const r of res.rows) {
       const buttons = [
         [
-          { text: '✅ Fatto', callback_data: `done_${r.id}` },
-          { text: '🗑️ Elimina', callback_data: `delete_${r.id}` },
-          { text: '✏️ Modifica', callback_data: `edit_${r.id}` }
+          { text: r.completed ? '✅ Completato' : '✅ Completa', callback_data: `done_${r.id}` }
         ]
       ];
       await ctx.replyWithHTML(
-        `<b>${r.time || ''}</b> - ${r.text} [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
+        `<b>${r.text}</b> [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
         { reply_markup: { inline_keyboard: buttons } }
       );
     }
-    // Mostra i filtri in alto
-    await ctx.reply('Filtra per categoria:', { reply_markup: { inline_keyboard: filterButtons } });
     await ctx.answerCbQuery();
     return;
   } 

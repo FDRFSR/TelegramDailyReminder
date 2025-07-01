@@ -70,6 +70,7 @@ async function runMigrations() {
           inline_keyboard: [
             [
               { text: '➕ Crea promemoria', callback_data: 'addcat_work' },
+              { text: '➕ Crea promemoria personale', callback_data: 'addcat_personal' },
               { text: '📋 Vedi lista', callback_data: 'show_list' }
             ]
           ]
@@ -87,7 +88,6 @@ async function runMigrations() {
   // Gestione callback per pulsante "Vedi lista"
   bot.action('show_list', async (ctx) => {
     await ctx.answerCbQuery();
-    // Invia la lista direttamente, non solo il comando
     const db = getDb();
     const userId = String(ctx.from.id);
     const session = await sessionService.getUserSession(userId);
@@ -101,42 +101,20 @@ async function runMigrations() {
     query += ' ORDER BY date, time';
     const res = await db.query(query, params);
     if (!res.rows.length) {
-      await ctx.reply('Nessun promemoria trovato. Puoi aggiungerne uno:', {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '➕ Aggiungi promemoria Lavoro', callback_data: 'addcat_work' },
-              { text: '➕ Aggiungi promemoria Personale', callback_data: 'addcat_personal' }
-            ]
-          ]
-        }
-      });
+      await ctx.reply('Nessun promemoria trovato.');
       return;
     }
-    // Pulsanti filtro
-    const filterButtons = [
-      [
-        { text: 'Tutti', callback_data: 'filter_all' },
-        { text: 'Lavoro', callback_data: 'filter_work' },
-        { text: 'Personale', callback_data: 'filter_personal' }
-      ]
-    ];
-    // Lista promemoria con pulsanti azione
     for (const r of res.rows) {
       const buttons = [
         [
-          { text: '✅ Fatto', callback_data: `done_${r.id}` },
-          { text: '🗑️ Elimina', callback_data: `delete_${r.id}` },
-          { text: '✏️ Modifica', callback_data: `edit_${r.id}` }
+          { text: r.completed ? '✅ Completato' : '✅ Completa', callback_data: `done_${r.id}` }
         ]
       ];
       await ctx.replyWithHTML(
-        `<b>${r.time || ''}</b> - ${r.text} [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
+        `<b>${r.text}</b> [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
         { reply_markup: { inline_keyboard: buttons } }
       );
     }
-    // Mostra i filtri in alto
-    await ctx.reply('Filtra per categoria:', { reply_markup: { inline_keyboard: filterButtons } });
   });
 
   // === TODO: INTEGRAZIONE FEATURE PRINCIPALI E AVANZATE ===
@@ -239,10 +217,6 @@ bot.command('add', async (ctx) => {
           [
             { text: '🧑‍💼 Lavoro', callback_data: 'addcat_work' },
             { text: '🏠 Personale', callback_data: 'addcat_personal' }
-          ],
-          [
-            { text: '➕ Aggiungi promemoria Lavoro', callback_data: 'addcat_work' },
-            { text: '➕ Aggiungi promemoria Personale', callback_data: 'addcat_personal' }
           ]
         ]
       }
@@ -269,85 +243,32 @@ bot.command('list', async (ctx) => {
     query += ' ORDER BY date, time';
     const res = await db.query(query, params);
     if (!res.rows.length) {
-      await ctx.reply('Nessun promemoria trovato. Puoi aggiungerne uno:', {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '➕ Aggiungi promemoria Lavoro', callback_data: 'addcat_work' },
-              { text: '➕ Aggiungi promemoria Personale', callback_data: 'addcat_personal' }
-            ]
-          ]
-        }
-      });
+      await ctx.reply('Nessun promemoria trovato.');
       return;
     }
-    // Pulsanti filtro
-    const filterButtons = [
-      [
-        { text: 'Tutti', callback_data: 'filter_all' },
-        { text: 'Lavoro', callback_data: 'filter_work' },
-        { text: 'Personale', callback_data: 'filter_personal' }
-      ]
-    ];
-    // Lista promemoria con pulsanti azione
     for (const r of res.rows) {
       const buttons = [
         [
-          { text: '✅ Fatto', callback_data: `done_${r.id}` },
-          { text: '🗑️ Elimina', callback_data: `delete_${r.id}` },
-          { text: '✏️ Modifica', callback_data: `edit_${r.id}` }
+          { text: r.completed ? '✅ Completato' : '✅ Completa', callback_data: `done_${r.id}` }
         ]
       ];
       await ctx.replyWithHTML(
-        `<b>${r.time}</b> - ${r.text} [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
+        `<b>${r.text}</b> [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
         { reply_markup: { inline_keyboard: buttons } }
       );
     }
-    // Mostra i filtri in alto
-    await ctx.reply('Filtra per categoria:', { reply_markup: { inline_keyboard: filterButtons } });
   } catch (err) {
     logger.error('Errore in /list:', err);
     ctx.reply('❌ Errore interno.');
   }
 });
 
-// /delete command con elenco e pulsanti elimina
-bot.command('delete', async (ctx) => {
-  try {
-    const db = getDb();
-    const userId = String(ctx.from.id);
-    const res = await db.query('SELECT * FROM reminders WHERE user_id = $1 ORDER BY date, time', [userId]);
-    if (!res.rows.length) {
-      await ctx.reply('Nessun promemoria da eliminare.');
-      return;
-    }
-    for (const r of res.rows) {
-      const buttons = [
-        [
-          { text: '🗑️ Elimina', callback_data: `delete_${r.id}` }
-        ]
-      ];
-      await ctx.replyWithHTML(
-        `<b>${r.time}</b> - ${r.text} [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
-        { reply_markup: { inline_keyboard: buttons } }
-      );
-    }
-  } catch (err) {
-    logger.error('Errore in /delete:', err);
-    ctx.reply('❌ Errore interno.');
-  }
-});
-
 // Handler per completare il flusso guidato di aggiunta promemoria dopo la scelta categoria
-const reminderService = require('./services/reminderService');
 bot.on('text', async (ctx, next) => {
   const userId = String(ctx.from.id);
   const session = await sessionService.getUserSession(userId);
-  // Se l'utente è nel flusso guidato di aggiunta (ha scelto categoria ma non ancora inserito testo)
   if (session && session.add_category && !ctx.message.text.startsWith('/')) {
     const text = ctx.message.text.trim();
-    // Salva direttamente il promemoria senza chiedere orario/giorno
-    // Imposta un orario di default (es: 08:00) per rispettare il vincolo NOT NULL
     const defaultTime = '08:00';
     const db = getDb();
     const res = await db.query(
@@ -357,18 +278,8 @@ bot.on('text', async (ctx, next) => {
     const reminderId = res.rows[0].id;
     await ctx.reply(
       `✅ Promemoria aggiunto: <b>${text}</b> [${session.add_category}]`,
-      {
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: 'Modifica', callback_data: `edit_${reminderId}` },
-            { text: 'Elimina', callback_data: `delete_${reminderId}` },
-            { text: 'Fatto', callback_data: `done_${reminderId}` }
-          ]]
-        }
-      }
+      { parse_mode: 'HTML' }
     );
-    // Pulisci la sessione
     await sessionService.setUserSession(userId, { add_category: null, add_text: null });
     return;
   }
