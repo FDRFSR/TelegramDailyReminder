@@ -174,6 +174,10 @@ bot.command('add', async (ctx) => {
           [
             { text: '🧑‍💼 Lavoro', callback_data: 'addcat_work' },
             { text: '🏠 Personale', callback_data: 'addcat_personal' }
+          ],
+          [
+            { text: '➕ Aggiungi promemoria Lavoro', callback_data: 'addcat_work' },
+            { text: '➕ Aggiungi promemoria Personale', callback_data: 'addcat_personal' }
           ]
         ]
       }
@@ -200,7 +204,16 @@ bot.command('list', async (ctx) => {
     query += ' ORDER BY date, time';
     const res = await db.query(query, params);
     if (!res.rows.length) {
-      await ctx.reply('Nessun promemoria trovato.');
+      await ctx.reply('Nessun promemoria trovato. Puoi aggiungerne uno:', {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '➕ Aggiungi promemoria Lavoro', callback_data: 'addcat_work' },
+              { text: '➕ Aggiungi promemoria Personale', callback_data: 'addcat_personal' }
+            ]
+          ]
+        }
+      });
       return;
     }
     // Pulsanti filtro
@@ -258,6 +271,52 @@ bot.command('delete', async (ctx) => {
     logger.error('Errore in /delete:', err);
     ctx.reply('❌ Errore interno.');
   }
+});
+
+// Handler per completare il flusso guidato di aggiunta promemoria dopo la scelta categoria
+const reminderService = require('./services/reminderService');
+bot.on('text', async (ctx, next) => {
+  const userId = String(ctx.from.id);
+  const session = await sessionService.getUserSession(userId);
+  // Se l'utente è nel flusso guidato di aggiunta (ha scelto categoria ma non ancora inserito testo)
+  if (session && session.add_category && !ctx.message.text.startsWith('/')) {
+    // Chiedi l'orario del promemoria
+    const text = ctx.message.text.trim();
+    // Chiedi l'orario se non già chiesto
+    await sessionService.setUserSession(userId, { add_category: session.add_category, add_text: text });
+    await ctx.reply('A che ora vuoi ricevere il promemoria? (Formato HH:MM, es: 09:30)');
+    return;
+  }
+  // Se l'utente ha già inserito testo e ora, salva il promemoria
+  if (session && session.add_category && session.add_text && /^\d{1,2}:\d{2}$/.test(ctx.message.text.trim())) {
+    const time = ctx.message.text.trim();
+    const text = session.add_text;
+    const category = session.add_category;
+    // Salva nel DB
+    const db = getDb();
+    const res = await db.query(
+      'INSERT INTO reminders (user_id, text, time, category) VALUES ($1, $2, $3, $4) RETURNING id',
+      [userId, text, time, category]
+    );
+    const reminderId = res.rows[0].id;
+    await ctx.reply(
+      `✅ Promemoria aggiunto: <b>${time}</b> - ${text} [${category}]`,
+      {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: 'Modifica', callback_data: `edit_${reminderId}` },
+            { text: 'Elimina', callback_data: `delete_${reminderId}` },
+            { text: 'Fatto', callback_data: `done_${reminderId}` }
+          ]]
+        }
+      }
+    );
+    // Pulisci la sessione
+    await sessionService.setUserSession(userId, { add_category: null, add_text: null });
+    return;
+  }
+  if (next) return next();
 });
 
 // Graceful stop

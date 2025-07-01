@@ -6,8 +6,12 @@ const { getDb } = require('../db');
 module.exports = {
   // Crea un nuovo promemoria (mock, da implementare con DB)
   async createReminder(userId, time, text, category) {
-    // TODO: inserire nel DB
-    return { id: 1, userId, time, text, category, completed: false };
+    const db = getDb();
+    const res = await db.query(
+      'INSERT INTO reminders (user_id, text, time, category) VALUES ($1, $2, $3, $4) RETURNING id, user_id, time, text, category, completed',
+      [userId, text, time, category || null]
+    );
+    return res.rows[0];
   },
   // Lista promemoria (mock)
   async listReminders(userId) {
