@@ -249,11 +249,11 @@ bot.command('list', async (ctx) => {
     for (const r of res.rows) {
       const buttons = [
         [
-          { text: r.completed ? '✅ Completato' : '✅ Completa', callback_data: `done_${r.id}` }
+          { text: r.completed ? '✅ ' + r.text : r.text, callback_data: `done_${r.id}` }
         ]
       ];
       await ctx.replyWithHTML(
-        `<b>${r.text}</b> [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
+        `[${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
         { reply_markup: { inline_keyboard: buttons } }
       );
     }
