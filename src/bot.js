@@ -339,6 +339,8 @@ bot.hears('Crea Personale', async (ctx) => {
   });
 });
 bot.hears('Vedi lista', async (ctx) => {
+  // Reset eventuale filtro categoria per mostrare tutti i promemoria
+  await sessionService.setUserSession(String(ctx.from.id), { filter_category: null });
   await showRemindersList(ctx);
 });
 
