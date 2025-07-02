@@ -104,7 +104,7 @@ async function runMigrations() {
     const userId = String(ctx.from.id);
     const session = await sessionService.getUserSession(userId);
     const category = session && session.filter_category;
-    let query = 'SELECT * FROM reminders WHERE user_id = $1';
+    let query = 'SELECT * FROM reminders WHERE user_id = $1 AND completed = FALSE';
     const params = [userId];
     if (category) {
       query += ' AND category = $2';
