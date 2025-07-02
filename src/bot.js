@@ -24,6 +24,16 @@ if (!process.env.BOT_TOKEN) {
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
+// 1. Ottimizzazione: DRY per tastiera rapida
+const QUICK_REPLY_KEYBOARD = [
+  ['Crea Lavoro', 'Crea Personale', 'Vedi lista']
+];
+const QUICK_REPLY_MARKUP = {
+  keyboard: QUICK_REPLY_KEYBOARD,
+  resize_keyboard: true,
+  one_time_keyboard: false
+};
+
 // Funzione per eseguire le migrazioni del database
 async function runMigrations() {
   if (!process.env.DATABASE_URL) {
@@ -68,18 +78,8 @@ async function runMigrations() {
       await sendAndAutoDelete(ctx, messages.onboarding, {
         parse_mode: 'HTML',
         reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '➕ Crea Lavoro', callback_data: 'addcat_work' },
-              { text: '➕ Crea Personale', callback_data: 'addcat_personal' },
-              { text: '📋 Vedi lista', callback_data: 'show_list' }
-            ]
-          ],
-          keyboard: [
-            ['Crea Lavoro', 'Crea Personale', 'Vedi lista']
-          ],
-          resize_keyboard: true,
-          one_time_keyboard: false
+          inline_keyboard: MAIN_INLINE_KEYBOARD,
+          ...QUICK_REPLY_MARKUP
         }
       });
     } catch (err) {
@@ -223,14 +223,9 @@ async function runMigrations() {
 
 // Funzione helper per inviare un messaggio e cancellarlo dopo 30 minuti
 async function sendAndAutoDelete(ctx, text, extra = {}) {
-  // Assicura che la reply_keyboard sia sempre visibile
   if (!extra.reply_markup) extra.reply_markup = {};
   if (!extra.reply_markup.keyboard) {
-    extra.reply_markup.keyboard = [
-      ['Crea Lavoro', 'Crea Personale', 'Vedi lista']
-    ];
-    extra.reply_markup.resize_keyboard = true;
-    extra.reply_markup.one_time_keyboard = false;
+    Object.assign(extra.reply_markup, QUICK_REPLY_MARKUP);
   }
   const sent = await ctx.reply(text, extra);
   setTimeout(() => {
@@ -245,11 +240,7 @@ async function sendAndAutoDelete(ctx, text, extra = {}) {
 async function sendAndAutoDeleteHTML(ctx, text, extra = {}) {
   if (!extra.reply_markup) extra.reply_markup = {};
   if (!extra.reply_markup.keyboard) {
-    extra.reply_markup.keyboard = [
-      ['Crea Lavoro', 'Crea Personale', 'Vedi lista']
-    ];
-    extra.reply_markup.resize_keyboard = true;
-    extra.reply_markup.one_time_keyboard = false;
+    Object.assign(extra.reply_markup, QUICK_REPLY_MARKUP);
   }
   const sent = await ctx.replyWithHTML(text, extra);
   setTimeout(() => {
@@ -273,11 +264,7 @@ bot.command('add', async (ctx) => {
             { text: '🏠 Personale', callback_data: 'addcat_personal' }
           ]
         ],
-        keyboard: [
-          ['Crea Lavoro', 'Crea Personale', 'Vedi lista']
-        ],
-        resize_keyboard: true,
-        one_time_keyboard: false
+        ...QUICK_REPLY_MARKUP
       }
     });
   } catch (err) {
@@ -323,35 +310,19 @@ bot.on('text', async (ctx, next) => {
 // Gestione selezione rapida tramite reply_keyboard
 bot.hears('Crea Lavoro', async (ctx) => {
   await sessionService.setUserSession(String(ctx.from.id), { add_category: 'work' });
-  await sendAndAutoDelete(ctx, 'Scrivi il testo del promemoria di lavoro:', {
-    // La tastiera rapida sarà comunque forzata da sendAndAutoDelete
-    reply_markup: {
-      remove_keyboard: false
-    }
-  });
+  await sendAndAutoDelete(ctx, 'Scrivi il testo del promemoria di lavoro:');
 });
 bot.hears('Crea Personale', async (ctx) => {
   await sessionService.setUserSession(String(ctx.from.id), { add_category: 'personal' });
-  await sendAndAutoDelete(ctx, 'Scrivi il testo del promemoria personale:', {
-    reply_markup: {
-      remove_keyboard: false
-    }
-  });
+  await sendAndAutoDelete(ctx, 'Scrivi il testo del promemoria personale:');
 });
 bot.hears('Vedi lista', async (ctx) => {
   // Reset eventuale filtro categoria per mostrare tutti i promemoria
   await sessionService.setUserSession(String(ctx.from.id), { filter_category: null });
   // Forza la tastiera rapida visibile anche dopo la lista
   await showRemindersList(ctx);
-  await ctx.reply('Scegli un’azione:', {
-    reply_markup: {
-      keyboard: [
-        ['Crea Lavoro', 'Crea Personale', 'Vedi lista']
-      ],
-      resize_keyboard: true,
-      one_time_keyboard: false
-    }
-  });
+  // Invia un messaggio dummy che si autocancella per mantenere la tastiera rapida, senza flood
+  await sendAndAutoDelete(ctx, 'Scegli un’azione:');
 });
 
 // Graceful stop
