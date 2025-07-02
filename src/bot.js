@@ -22,10 +22,31 @@ if (!process.env.BOT_TOKEN) {
   process.exit(1);
 }
 
-// Log all environment variables for debugging Railway deploy
+// === Ottimizzazioni e best practice ===
+
+// 1. Validazione centralizzata variabili d'ambiente
+function validateEnv() {
+  const required = ['BOT_TOKEN', 'DATABASE_URL'];
+  const missing = required.filter((k) => !process.env[k]);
+  if (missing.length) {
+    console.error('❌ Variabili d\'ambiente mancanti:', missing.join(', '));
+    process.exit(1);
+  }
+}
+validateEnv();
+
+// 2. Gestione errori globale e logging
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled Rejection:', reason);
+});
+
+// 3. Non loggare mai il valore reale del BOT_TOKEN
 console.log('ENV DEBUG:', {
-  BOT_TOKEN: process.env.BOT_TOKEN,
-  DATABASE_URL: process.env.DATABASE_URL,
+  BOT_TOKEN: process.env.BOT_TOKEN ? '***SET***' : undefined,
+  DATABASE_URL: process.env.DATABASE_URL ? '***SET***' : undefined,
   NODE_ENV: process.env.NODE_ENV,
   PORT: process.env.PORT
 });
@@ -125,22 +146,17 @@ async function runMigrations() {
       await sendAndAutoDelete(ctx, 'Nessun promemoria trovato.');
       return;
     }
-    // Messaggio introduttivo
-    await sendAndAutoDelete(ctx, 'Ecco i tuoi promemoria:');
+    // Raggruppa tutti i reminder in un unico messaggio con tastiera multipla
+    let msg = '<b>Ecco i tuoi promemoria:</b>\n';
+    const keyboard = [];
     for (const r of res.rows) {
-      // Mostra il testo completo della task nel messaggio, e una preview nel pulsante (max 50 caratteri)
       const preview = (r.completed ? '✅ ' : '') + (r.text.length > 47 ? r.text.slice(0, 47) + '…' : r.text);
-      const buttons = [
-        [
-          { text: preview, callback_data: `done_${r.id}` }
-        ]
-      ];
-      await sendAndAutoDeleteHTML(
-        ctx,
-        `<b>${r.text}</b> [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
-        { reply_markup: { inline_keyboard: buttons } }
-      );
+      msg += `\n${preview} [${r.category || 'generico'}]`;
+      keyboard.push([
+        { text: preview, callback_data: `done_${r.id}` }
+      ]);
     }
+    await sendAndAutoDeleteHTML(ctx, msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: keyboard } });
   }
 
   // Gestione callback per pulsante "Vedi lista"
@@ -270,43 +286,79 @@ async function sendAndAutoDeleteHTML(ctx, text, extra = {}) {
   return sent;
 }
 
-// /add command con scelta categoria tramite pulsanti inline
-bot.command('add', async (ctx) => {
-  try {
-    await sessionService.setUserSession(String(ctx.from.id), { add_category: null });
-    await sendAndAutoDelete(ctx, 'Scegli la categoria del promemoria:', {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '🧑‍💼 Lavoro', callback_data: 'addcat_work' },
-            { text: '🏠 Personale', callback_data: 'addcat_personal' }
-          ]
-        ],
-        ...QUICK_REPLY_MARKUP
-      }
-    });
-  } catch (err) {
-    logger.error('Errore in /add:', err);
-    await sendAndAutoDelete(ctx, '❌ Errore interno.');
+// === Ottimizzazioni avanzate aggiuntive ===
+
+// 1. Sanificazione input utente (basic, per sicurezza e logging)
+function sanitizeInput(text) {
+  if (!text || typeof text !== 'string') return '';
+  // Rimuove caratteri di controllo e normalizza whitespace
+  return text.replace(/[\x00-\x1F\x7F]/g, '').trim();
+}
+
+// 2. Flood control: limita a 5 messaggi ogni 10 secondi per utente
+const userMessageTimestamps = new Map();
+bot.use((ctx, next) => {
+  if (!ctx.from) return next();
+  const userId = String(ctx.from.id);
+  const now = Date.now();
+  const arr = userMessageTimestamps.get(userId) || [];
+  const recent = arr.filter(ts => now - ts < 10000);
+  recent.push(now);
+  userMessageTimestamps.set(userId, recent);
+  if (recent.length > 5) {
+    ctx.reply('⏳ Stai inviando troppi messaggi, attendi qualche secondo.');
+    return;
   }
+  return next();
 });
 
-// /list command con pulsanti azione e filtri
-bot.command('list', async (ctx) => {
-  try {
-    await showRemindersList(ctx);
-  } catch (err) {
-    logger.error('Errore in /list:', err);
-    await sendAndAutoDelete(ctx, '❌ Errore interno.');
+// 3. Reset automatico sessione se l’utente invia un comando durante un flusso guidato
+bot.on('text', async (ctx, next) => {
+  const userId = String(ctx.from.id);
+  const session = await sessionService.getUserSession(userId);
+  if (session && session.add_category && ctx.message.text.startsWith('/')) {
+    await sessionService.setUserSession(userId, { add_category: null, add_text: null });
+    await sendAndAutoDelete(ctx, '⚠️ Flusso di creazione promemoria annullato.');
+    return;
   }
+  return next();
 });
 
-// Handler per completare il flusso guidato di aggiunta promemoria dopo la scelta categoria
+// 4. Logging dettagliato degli errori di validazione
+async function logValidationError(ctx, text) {
+  logger.warn(`Input non valido da utente ${ctx.from.id}: '${sanitizeInput(text)}'`);
+}
+
+// 5. Risposta ai comandi sconosciuti
+bot.on('text', async (ctx, next) => {
+  if (ctx.message.text.startsWith('/')) {
+    await sendAndAutoDelete(ctx, '❓ Comando non riconosciuto. Usa /start per il menu.');
+    return;
+  }
+  return next();
+});
+
+// 6. Blocco utenti bannati (stub, pronto per estensione futura)
+const bannedUsers = new Set(); // Popola da DB o file se serve
+bot.use((ctx, next) => {
+  if (ctx.from && bannedUsers.has(String(ctx.from.id))) {
+    ctx.reply('⛔ Sei stato bannato dal bot.');
+    return;
+  }
+  return next();
+});
+
+// Modifica handler di aggiunta promemoria per usare la sanificazione e logging errori
 bot.on('text', async (ctx, next) => {
   const userId = String(ctx.from.id);
   const session = await sessionService.getUserSession(userId);
   if (session && session.add_category && !ctx.message.text.startsWith('/')) {
-    const text = ctx.message.text.trim();
+    const text = sanitizeInput(ctx.message.text);
+    if (!validateReminderText(text)) {
+      await logValidationError(ctx, text);
+      await sendAndAutoDelete(ctx, '❌ Testo promemoria non valido. Deve essere tra 2 e 200 caratteri.');
+      return;
+    }
     const defaultTime = '08:00';
     const db = getDb();
     const res = await db.query(
@@ -322,61 +374,30 @@ bot.on('text', async (ctx, next) => {
     await sessionService.setUserSession(userId, { add_category: null, add_text: null });
     return;
   }
-  if (next) return next();
+  return next();
 });
 
-// Gestione selezione rapida tramite reply_keyboard
-bot.hears('Crea Lavoro', async (ctx) => {
-  await sessionService.setUserSession(String(ctx.from.id), { add_category: 'work' });
-  await sendAndAutoDelete(ctx, 'Scrivi il testo del promemoria di lavoro:');
-});
-bot.hears('Crea Personale', async (ctx) => {
-  await sessionService.setUserSession(String(ctx.from.id), { add_category: 'personal' });
-  await sendAndAutoDelete(ctx, 'Scrivi il testo del promemoria personale:');
-});
-bot.hears('Vedi lista', async (ctx) => {
-  // Reset eventuale filtro categoria per mostrare tutti i promemoria
-  await sessionService.setUserSession(String(ctx.from.id), { filter_category: null });
-  // Forza la tastiera rapida visibile anche dopo la lista
-  await showRemindersList(ctx);
-  // Invia un messaggio dummy che si autocancella per mantenere la tastiera rapida, senza flood
-  await sendAndAutoDelete(ctx, 'Scegli un’azione:');
-});
-
-// Graceful stop
-let isShuttingDown = false;
-async function shutdown(signal) {
-  if (isShuttingDown) return;
-  isShuttingDown = true;
+// /tasks command: mostra la lista delle task (promemoria non completati)
+bot.command('tasks', async (ctx) => {
+  const userId = String(ctx.from.id);
   try {
-    logger.info(`${signal} received, stopping bot and closing DB...`);
-    await bot.stop(signal);
-    // Chiudi la connessione al DB se inizializzata
-    try {
-      const db = getDb();
-      if (db && db.end) {
-        await db.end();
-        logger.info('Database connection closed.');
-      }
-    } catch (e) {
-      logger.warn('Errore durante la chiusura del DB:', e);
+    const db = getDb();
+    const res = await db.query(
+      'SELECT * FROM reminders WHERE user_id = $1 AND completed = FALSE ORDER BY date, time',
+      [userId]
+    );
+    if (!res.rows.length) {
+      await sendAndAutoDelete(ctx, 'Nessuna task trovata.');
+      return;
     }
-    logger.info('Shutdown completo.');
-    process.exit(0);
+    let msg = '<b>Le tue task:</b>\n';
+    for (const r of res.rows) {
+      const preview = (r.text.length > 47 ? r.text.slice(0, 47) + '…' : r.text);
+      msg += `\n${preview} [${r.category || 'generico'}]`;
+    }
+    await sendAndAutoDeleteHTML(ctx, msg, { parse_mode: 'HTML' });
   } catch (err) {
-    logger.error('Errore durante lo shutdown:', err);
-    process.exit(1);
+    logger.error('Errore in /tasks:', err);
+    await sendAndAutoDelete(ctx, '❌ Errore interno.');
   }
-}
-process.once('SIGINT', () => { shutdown('SIGINT'); });
-process.once('SIGTERM', () => { shutdown('SIGTERM'); });
-
-// === HTTP healthcheck server per Railway ===
-const http = require('http');
-const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('OK');
-}).listen(PORT, () => {
-  logger.info(`Healthcheck HTTP server listening on port ${PORT}`);
 });
