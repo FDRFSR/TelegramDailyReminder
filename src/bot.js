@@ -69,8 +69,8 @@ async function runMigrations() {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: '➕ Crea promemoria lavoro', callback_data: 'addcat_work' },
-              { text: '➕ Crea promemoria personale', callback_data: 'addcat_personal' },
+              { text: '➕ Crea Lavoro', callback_data: 'addcat_work' },
+              { text: '➕ Crea Personale', callback_data: 'addcat_personal' },
               { text: '📋 Vedi lista', callback_data: 'show_list' }
             ]
           ]
