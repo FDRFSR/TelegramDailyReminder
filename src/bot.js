@@ -64,6 +64,7 @@ async function runMigrations() {
         'INSERT INTO users (id, first_name, username) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING',
         [userId, ctx.from.first_name || '', ctx.from.username || '']
       );
+      // Mostra sia inline_keyboard che reply_keyboard per UX mobile-friendly
       await ctx.reply(messages.onboarding, {
         parse_mode: 'HTML',
         reply_markup: {
@@ -73,7 +74,12 @@ async function runMigrations() {
               { text: '➕ Crea Personale', callback_data: 'addcat_personal' },
               { text: '📋 Vedi lista', callback_data: 'show_list' }
             ]
-          ]
+          ],
+          keyboard: [
+            ['Crea Lavoro', 'Crea Personale', 'Vedi lista']
+          ],
+          resize_keyboard: true,
+          one_time_keyboard: false
         }
       });
     } catch (err) {
@@ -225,7 +231,12 @@ bot.command('add', async (ctx) => {
             { text: '🧑‍💼 Lavoro', callback_data: 'addcat_work' },
             { text: '🏠 Personale', callback_data: 'addcat_personal' }
           ]
-        ]
+        ],
+        keyboard: [
+          ['Crea Lavoro', 'Crea Personale', 'Vedi lista']
+        ],
+        resize_keyboard: true,
+        one_time_keyboard: false
       }
     });
   } catch (err) {
@@ -265,6 +276,27 @@ bot.on('text', async (ctx, next) => {
     return;
   }
   if (next) return next();
+});
+
+// Gestione selezione rapida tramite reply_keyboard
+bot.hears('Crea Lavoro', async (ctx) => {
+  await sessionService.setUserSession(String(ctx.from.id), { add_category: 'work' });
+  await ctx.reply('Scrivi il testo del promemoria di lavoro:', {
+    reply_markup: {
+      remove_keyboard: true
+    }
+  });
+});
+bot.hears('Crea Personale', async (ctx) => {
+  await sessionService.setUserSession(String(ctx.from.id), { add_category: 'personal' });
+  await ctx.reply('Scrivi il testo del promemoria personale:', {
+    reply_markup: {
+      remove_keyboard: true
+    }
+  });
+});
+bot.hears('Vedi lista', async (ctx) => {
+  await showRemindersList(ctx);
 });
 
 // Graceful stop
