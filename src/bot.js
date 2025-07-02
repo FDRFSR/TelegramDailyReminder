@@ -85,9 +85,8 @@ async function runMigrations() {
   // Gestione callback dei pulsanti inline
   bot.on('callback_query', handleCallback);
 
-  // Gestione callback per pulsante "Vedi lista"
-  bot.action('show_list', async (ctx) => {
-    await ctx.answerCbQuery();
+  // Funzione riutilizzabile per mostrare la lista dei promemoria
+  async function showRemindersList(ctx) {
     const db = getDb();
     const userId = String(ctx.from.id);
     const session = await sessionService.getUserSession(userId);
@@ -115,6 +114,12 @@ async function runMigrations() {
         { reply_markup: { inline_keyboard: buttons } }
       );
     }
+  }
+
+  // Gestione callback per pulsante "Vedi lista"
+  bot.action('show_list', async (ctx) => {
+    await ctx.answerCbQuery();
+    await showRemindersList(ctx);
   });
 
   // === TODO: INTEGRAZIONE FEATURE PRINCIPALI E AVANZATE ===
@@ -230,33 +235,7 @@ bot.command('add', async (ctx) => {
 // /list command con pulsanti azione e filtri
 bot.command('list', async (ctx) => {
   try {
-    const db = getDb();
-    const userId = String(ctx.from.id);
-    const session = await sessionService.getUserSession(userId);
-    const category = session.filter_category;
-    let query = 'SELECT * FROM reminders WHERE user_id = $1';
-    const params = [userId];
-    if (category) {
-      query += ' AND category = $2';
-      params.push(category);
-    }
-    query += ' ORDER BY date, time';
-    const res = await db.query(query, params);
-    if (!res.rows.length) {
-      await ctx.reply('Nessun promemoria trovato.');
-      return;
-    }
-    for (const r of res.rows) {
-      const buttons = [
-        [
-          { text: r.completed ? '✅ ' + r.text : r.text, callback_data: `done_${r.id}` }
-        ]
-      ];
-      await ctx.replyWithHTML(
-        `[${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
-        { reply_markup: { inline_keyboard: buttons } }
-      );
-    }
+    await showRemindersList(ctx);
   } catch (err) {
     logger.error('Errore in /list:', err);
     ctx.reply('❌ Errore interno.');
