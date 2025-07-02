@@ -405,17 +405,26 @@ bot.command('tasks', async (ctx) => {
       [userId]
     );
     if (!res.rows.length) {
-      await sendAndAutoDelete(ctx, 'Nessuna task trovata.');
+      await sendAndAutoDelete(ctx, 'Nessuna task trovata.', QUICK_REPLY_MARKUP);
       return;
     }
+    // Suddividi in blocchi per non superare il limite di Telegram (4096 caratteri)
     let msg = '<b>Le tue task:</b>\n';
+    const blocks = [];
     for (const r of res.rows) {
       const preview = (r.text.length > 47 ? r.text.slice(0, 47) + '…' : r.text);
       msg += `\n${preview} [${r.category || 'generico'}]`;
+      if (msg.length > 3500) { // margine di sicurezza
+        blocks.push(msg);
+        msg = '';
+      }
     }
-    await sendAndAutoDeleteHTML(ctx, msg, { parse_mode: 'HTML' });
+    if (msg) blocks.push(msg);
+    for (const block of blocks) {
+      await sendAndAutoDeleteHTML(ctx, block, { parse_mode: 'HTML', ...QUICK_REPLY_MARKUP });
+    }
   } catch (err) {
     logger.error('Errore in /tasks:', err);
-    await sendAndAutoDelete(ctx, '❌ Errore interno.');
+    await sendAndAutoDelete(ctx, '❌ Errore interno.', QUICK_REPLY_MARKUP);
   }
 });

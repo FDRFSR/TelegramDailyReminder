@@ -3,6 +3,15 @@
 const { getDb } = require('../db');
 
 module.exports = (bot) => {
+  // Funzione helper per rispondere sempre con tastiera rapida
+  function replyWithQuickKeyboard(ctx, text, extra = {}) {
+    if (!extra.reply_markup) extra.reply_markup = {};
+    if (!extra.reply_markup.keyboard) {
+      Object.assign(extra.reply_markup, QUICK_REPLY_MARKUP);
+    }
+    return ctx.reply(text, extra);
+  }
+
   // /list command
   bot.command('list', async (ctx) => {
     const db = getDb();
@@ -12,7 +21,7 @@ module.exports = (bot) => {
       [userId]
     );
     if (res.rows.length === 0) {
-      return ctx.reply('Nessun promemoria trovato.');
+      return replyWithQuickKeyboard(ctx, 'Nessun promemoria trovato.');
     }
     let msg = '<b>📝 I tuoi promemoria:</b>\n';
     const keyboard = [];
@@ -27,7 +36,7 @@ module.exports = (bot) => {
     });
     ctx.reply(msg, {
       parse_mode: 'HTML',
-      reply_markup: { inline_keyboard: keyboard }
+      reply_markup: { inline_keyboard: keyboard, ...QUICK_REPLY_MARKUP }
     });
   });
 };
