@@ -22,6 +22,14 @@ if (!process.env.BOT_TOKEN) {
   process.exit(1);
 }
 
+// Log all environment variables for debugging Railway deploy
+console.log('ENV DEBUG:', {
+  BOT_TOKEN: process.env.BOT_TOKEN,
+  DATABASE_URL: process.env.DATABASE_URL,
+  NODE_ENV: process.env.NODE_ENV,
+  PORT: process.env.PORT
+});
+
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // DRY: Quick reply e tastiere inline centralizzate in costanti per coerenza e manutenzione.
