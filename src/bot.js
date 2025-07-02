@@ -65,7 +65,7 @@ async function runMigrations() {
         [userId, ctx.from.first_name || '', ctx.from.username || '']
       );
       // Mostra sia inline_keyboard che reply_keyboard per UX mobile-friendly
-      await ctx.reply(messages.onboarding, {
+      await sendAndAutoDelete(ctx, messages.onboarding, {
         parse_mode: 'HTML',
         reply_markup: {
           inline_keyboard: [
@@ -84,7 +84,7 @@ async function runMigrations() {
       });
     } catch (err) {
       logger.error('Errore in /start:', err);
-      ctx.reply(messages.errorInternal);
+      await sendAndAutoDelete(ctx, messages.errorInternal);
     }
   });
 
@@ -106,7 +106,7 @@ async function runMigrations() {
     query += ' ORDER BY date, time';
     const res = await db.query(query, params);
     if (!res.rows.length) {
-      await ctx.reply('Nessun promemoria trovato.');
+      await sendAndAutoDelete(ctx, 'Nessun promemoria trovato.');
       return;
     }
     for (const r of res.rows) {
@@ -117,7 +117,8 @@ async function runMigrations() {
           { text: preview, callback_data: `done_${r.id}` }
         ]
       ];
-      await ctx.replyWithHTML(
+      await sendAndAutoDeleteHTML(
+        ctx,
         `<b>${r.text}</b> [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
         { reply_markup: { inline_keyboard: buttons } }
       );
@@ -220,11 +221,51 @@ async function runMigrations() {
   logger.info('Telegram Daily Reminder Bot started.');
 })();
 
+// Funzione helper per inviare un messaggio e cancellarlo dopo 30 minuti
+async function sendAndAutoDelete(ctx, text, extra = {}) {
+  // Assicura che la reply_keyboard sia sempre visibile
+  if (!extra.reply_markup) extra.reply_markup = {};
+  if (!extra.reply_markup.keyboard) {
+    extra.reply_markup.keyboard = [
+      ['Crea Lavoro', 'Crea Personale', 'Vedi lista']
+    ];
+    extra.reply_markup.resize_keyboard = true;
+    extra.reply_markup.one_time_keyboard = false;
+  }
+  const sent = await ctx.reply(text, extra);
+  setTimeout(() => {
+    ctx.deleteMessage(sent.message_id).catch(() => {});
+    if (ctx.message && ctx.message.message_id) {
+      ctx.deleteMessage(ctx.message.message_id).catch(() => {});
+    }
+  }, 1800000); // 30 minuti
+  return sent;
+}
+// Variante per HTML
+async function sendAndAutoDeleteHTML(ctx, text, extra = {}) {
+  if (!extra.reply_markup) extra.reply_markup = {};
+  if (!extra.reply_markup.keyboard) {
+    extra.reply_markup.keyboard = [
+      ['Crea Lavoro', 'Crea Personale', 'Vedi lista']
+    ];
+    extra.reply_markup.resize_keyboard = true;
+    extra.reply_markup.one_time_keyboard = false;
+  }
+  const sent = await ctx.replyWithHTML(text, extra);
+  setTimeout(() => {
+    ctx.deleteMessage(sent.message_id).catch(() => {});
+    if (ctx.message && ctx.message.message_id) {
+      ctx.deleteMessage(ctx.message.message_id).catch(() => {});
+    }
+  }, 1800000);
+  return sent;
+}
+
 // /add command con scelta categoria tramite pulsanti inline
 bot.command('add', async (ctx) => {
   try {
     await sessionService.setUserSession(String(ctx.from.id), { add_category: null });
-    await ctx.reply('Scegli la categoria del promemoria:', {
+    await sendAndAutoDelete(ctx, 'Scegli la categoria del promemoria:', {
       reply_markup: {
         inline_keyboard: [
           [
@@ -241,7 +282,7 @@ bot.command('add', async (ctx) => {
     });
   } catch (err) {
     logger.error('Errore in /add:', err);
-    ctx.reply('❌ Errore interno.');
+    await sendAndAutoDelete(ctx, '❌ Errore interno.');
   }
 });
 
@@ -251,7 +292,7 @@ bot.command('list', async (ctx) => {
     await showRemindersList(ctx);
   } catch (err) {
     logger.error('Errore in /list:', err);
-    ctx.reply('❌ Errore interno.');
+    await sendAndAutoDelete(ctx, '❌ Errore interno.');
   }
 });
 
@@ -268,7 +309,8 @@ bot.on('text', async (ctx, next) => {
       [userId, text, session.add_category, defaultTime]
     );
     const reminderId = res.rows[0].id;
-    await ctx.reply(
+    await sendAndAutoDeleteHTML(
+      ctx,
       `✅ Promemoria aggiunto: <b>${text}</b> [${session.add_category}]`,
       { parse_mode: 'HTML' }
     );
@@ -281,17 +323,18 @@ bot.on('text', async (ctx, next) => {
 // Gestione selezione rapida tramite reply_keyboard
 bot.hears('Crea Lavoro', async (ctx) => {
   await sessionService.setUserSession(String(ctx.from.id), { add_category: 'work' });
-  await ctx.reply('Scrivi il testo del promemoria di lavoro:', {
+  await sendAndAutoDelete(ctx, 'Scrivi il testo del promemoria di lavoro:', {
+    // La tastiera rapida sarà comunque forzata da sendAndAutoDelete
     reply_markup: {
-      remove_keyboard: true
+      remove_keyboard: false
     }
   });
 });
 bot.hears('Crea Personale', async (ctx) => {
   await sessionService.setUserSession(String(ctx.from.id), { add_category: 'personal' });
-  await ctx.reply('Scrivi il testo del promemoria personale:', {
+  await sendAndAutoDelete(ctx, 'Scrivi il testo del promemoria personale:', {
     reply_markup: {
-      remove_keyboard: true
+      remove_keyboard: false
     }
   });
 });
