@@ -112,10 +112,13 @@ async function runMigrations() {
     }
     query += ' ORDER BY date, time';
     const res = await db.query(query, params);
+    logger.info(`Trovati ${res.rows.length} promemoria per l'utente ${userId}`);
     if (!res.rows.length) {
       await sendAndAutoDelete(ctx, 'Nessun promemoria trovato.');
       return;
     }
+    // Messaggio introduttivo
+    await sendAndAutoDelete(ctx, 'Ecco i tuoi promemoria:');
     for (const r of res.rows) {
       // Mostra il testo completo della task nel messaggio, e una preview nel pulsante (max 50 caratteri)
       const preview = (r.completed ? '✅ ' : '') + (r.text.length > 47 ? r.text.slice(0, 47) + '…' : r.text);
