@@ -104,13 +104,15 @@ async function runMigrations() {
       return;
     }
     for (const r of res.rows) {
+      // Mostra il testo completo della task nel messaggio, e una preview nel pulsante (max 50 caratteri)
+      const preview = (r.completed ? '✅ ' : '') + (r.text.length > 47 ? r.text.slice(0, 47) + '…' : r.text);
       const buttons = [
         [
-          { text: r.completed ? '✅ ' + r.text : r.text, callback_data: `done_${r.id}` }
+          { text: preview, callback_data: `done_${r.id}` }
         ]
       ];
       await ctx.replyWithHTML(
-        `[${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
+        `<b>${r.text}</b> [${r.category || 'generico'}]${r.completed ? ' ✅' : ''}`,
         { reply_markup: { inline_keyboard: buttons } }
       );
     }
