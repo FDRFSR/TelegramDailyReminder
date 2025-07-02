@@ -103,7 +103,7 @@ async function runMigrations() {
     const db = getDb();
     const userId = String(ctx.from.id);
     const session = await sessionService.getUserSession(userId);
-    const category = session.filter_category;
+    const category = session && session.filter_category;
     let query = 'SELECT * FROM reminders WHERE user_id = $1';
     const params = [userId];
     if (category) {
