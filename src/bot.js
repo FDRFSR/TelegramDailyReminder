@@ -24,7 +24,14 @@ if (!process.env.BOT_TOKEN) {
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// 1. Ottimizzazione: DRY per tastiera rapida
+// DRY: Quick reply e tastiere inline centralizzate in costanti per coerenza e manutenzione.
+const MAIN_INLINE_KEYBOARD = [
+  [
+    { text: '➕ Crea Lavoro', callback_data: 'addcat_work' },
+    { text: '➕ Crea Personale', callback_data: 'addcat_personal' },
+    { text: '📋 Vedi lista', callback_data: 'show_list' }
+  ]
+];
 const QUICK_REPLY_KEYBOARD = [
   ['Crea Lavoro', 'Crea Personale', 'Vedi lista']
 ];
