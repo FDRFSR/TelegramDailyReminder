@@ -341,7 +341,17 @@ bot.hears('Crea Personale', async (ctx) => {
 bot.hears('Vedi lista', async (ctx) => {
   // Reset eventuale filtro categoria per mostrare tutti i promemoria
   await sessionService.setUserSession(String(ctx.from.id), { filter_category: null });
+  // Forza la tastiera rapida visibile anche dopo la lista
   await showRemindersList(ctx);
+  await ctx.reply('Scegli un’azione:', {
+    reply_markup: {
+      keyboard: [
+        ['Crea Lavoro', 'Crea Personale', 'Vedi lista']
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: false
+    }
+  });
 });
 
 // Graceful stop
