@@ -71,6 +71,7 @@ const QUICK_REPLY_MARKUP = {
 };
 
 // Funzione per eseguire le migrazioni del database
+// Migrazioni ottimizzate: esegui solo quelle non ancora applicate
 async function runMigrations() {
   if (!process.env.DATABASE_URL) {
     logger.error('DATABASE_URL non impostato, impossibile eseguire le migrazioni.');
@@ -79,12 +80,29 @@ async function runMigrations() {
   const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false });
   try {
     await client.connect();
+    // Crea tabella migrations se non esiste
+    await client.query(`CREATE TABLE IF NOT EXISTS migrations (id SERIAL PRIMARY KEY, name TEXT UNIQUE NOT NULL, applied_at TIMESTAMP DEFAULT NOW())`);
+    const { rows: applied } = await client.query('SELECT name FROM migrations');
+    const appliedSet = new Set(applied.map(r => r.name));
     const migrationsDir = path.join(__dirname, '../db/migrations');
     const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
     for (const file of files) {
+      if (appliedSet.has(file)) {
+        logger.info(`Migrazione già applicata: ${file}`);
+        continue;
+      }
       const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
       logger.info(`Eseguo migrazione: ${file}`);
-      await client.query(sql);
+      await client.query('BEGIN');
+      try {
+        await client.query(sql);
+        await client.query('INSERT INTO migrations (name) VALUES ($1)', [file]);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        logger.error(`Errore durante la migrazione ${file}:`, err);
+        throw err;
+      }
     }
     logger.info('Migrazioni completate con successo.');
   } catch (err) {
