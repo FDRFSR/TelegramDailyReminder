@@ -1,7 +1,7 @@
 // src/bot.js
 // Entry point for the Telegram Daily Reminder Bot
 
-const { Telegraf } = require('telegraf');
+const { Telegraf, Markup } = require('telegraf');
 const dotenv = require('dotenv');
 const registerCommands = require('./commands');
 const { setupDatabase, getDb } = require('./db');
@@ -101,19 +101,38 @@ async function runMigrations() {
   setupDatabase();
   registerCommands(bot);
 
+  // === Inline keyboard per azioni principali ===
+  const mainMenuKeyboard = Markup.inlineKeyboard([
+    [Markup.button.callback('➕ Nuova Task', 'add_task')],
+    [Markup.button.callback('📋 Lista Task', 'list_tasks')]
+  ]);
+
+  // === Helper tastiera inline principale ===
+  function getMainInlineKeyboard() {
+    return {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '➕ Nuova Task', callback_data: 'add_task' },
+            { text: '📋 Lista Task', callback_data: 'list_tasks' }
+          ]
+        ]
+      }
+    };
+  }
+
   // /start command: onboarding and welcome
   bot.start(async (ctx) => {
     try {
-      // Salva utente nel DB se non esiste
       const db = getDb();
       const userId = String(ctx.from.id);
       await db.query(
         'INSERT INTO users (id, first_name, username) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING',
         [userId, ctx.from.first_name || '', ctx.from.username || '']
       );
-      // Mostra solo messaggio di onboarding senza tastiere
       await sendAndAutoDelete(ctx, messages.onboarding, {
-        parse_mode: 'HTML'
+        parse_mode: 'HTML',
+        ...getMainInlineKeyboard()
       });
     } catch (err) {
       logger.error('Errore in /start:', err);
@@ -132,7 +151,7 @@ async function runMigrations() {
     );
     logger.info(`Trovati ${res.rows.length} promemoria per l'utente ${userId}`);
     if (!res.rows.length) {
-      await sendAndAutoDelete(ctx, '📭 Nessuna task o promemoria trovato. Usa /add per crearne uno!');
+      await sendAndAutoDelete(ctx, '📭 Nessuna task o promemoria trovato.', getMainInlineKeyboard());
       return;
     }
     // Ogni task è un messaggio separato, cliccabile: cliccando sul messaggio, la task viene completata
@@ -142,6 +161,8 @@ async function runMigrations() {
       // Salva mapping messaggio-task per intercettare il click
       await db.query('INSERT INTO user_sessions (user_id, message_id, reminder_id) VALUES ($1, $2, $3) ON CONFLICT (user_id, message_id) DO UPDATE SET reminder_id = $3', [userId, sent.message_id, r.id]);
     }
+    // Dopo la lista, mostra i pulsanti principali
+    await sendAndAutoDelete(ctx, 'Scegli un’azione:', getMainInlineKeyboard());
     // Pianifica la cancellazione di tutti i messaggi task dopo 30 minuti
     scheduleDeleteAllUserMessages(ctx);
   }
@@ -435,13 +456,31 @@ bot.on('text', async (ctx, next) => {
     );
     const reminderId = res.rows[0].id;
     logger.info(`Task creata: id=${reminderId}, utente=${userId}, testo='${text}'`);
-    await sendAndAutoDeleteHTML(ctx, `✅ Task creata: <b>${text}</b>\nID: <code>${reminderId}</code>`, { parse_mode: 'HTML' });
+    await sendAndAutoDeleteHTML(ctx, `✅ Task creata: <b>${text}</b>`, { parse_mode: 'HTML', ...getMainInlineKeyboard() });
     await sessionService.setUserSession(userId, {}); // reset
   } catch (err) {
     logger.error('Errore durante la creazione task:', err);
     await sendAndAutoDelete(ctx, '❌ Errore durante la creazione della task. Riprova.');
   }
   return;
+});
+
+// Gestione callback dei pulsanti inline principali
+bot.on('callback_query', async (ctx) => {
+  const data = ctx.callbackQuery.data;
+  if (data === 'add_task') {
+    const userId = String(ctx.from.id);
+    await sessionService.setUserSession(userId, { add_step: 'text' });
+    await sendAndAutoDelete(ctx, 'Scrivi il testo della task (2-200 caratteri).');
+    await ctx.answerCbQuery();
+    return;
+  }
+  if (data === 'list_tasks') {
+    await showRemindersList(ctx);
+    await ctx.answerCbQuery();
+    return;
+  }
+  await ctx.answerCbQuery();
 });
 
 // === Scheduler riepilogo automatico task ogni 30 minuti ===
