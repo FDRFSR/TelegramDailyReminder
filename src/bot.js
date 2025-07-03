@@ -7,7 +7,6 @@ const registerCommands = require('./commands');
 const { setupDatabase, getDb } = require('./db');
 const messages = require('./messages');
 const logger = require('./utils/logger');
-const handleCallback = require('./handlers/callbackHandler');
 const googleCalendar = require('./services/calendar/googleCalendarService');
 const fs = require('fs');
 const path = require('path');
@@ -52,23 +51,6 @@ console.log('ENV DEBUG:', {
 });
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-
-// DRY: Quick reply e tastiere inline centralizzate in costanti per coerenza e manutenzione.
-const MAIN_INLINE_KEYBOARD = [
-  [
-    { text: '➕ Crea Lavoro', callback_data: 'addcat_work' },
-    { text: '➕ Crea Personale', callback_data: 'addcat_personal' },
-    { text: '📋 Vedi lista', callback_data: 'show_list' }
-  ]
-];
-const QUICK_REPLY_KEYBOARD = [
-  ['Crea Lavoro', 'Crea Personale', 'Vedi lista']
-];
-const QUICK_REPLY_MARKUP = {
-  keyboard: QUICK_REPLY_KEYBOARD,
-  resize_keyboard: true,
-  one_time_keyboard: false
-};
 
 // Funzione per eseguire le migrazioni del database
 // Migrazioni ottimizzate: esegui solo quelle non ancora applicate
@@ -128,13 +110,9 @@ async function runMigrations() {
         'INSERT INTO users (id, first_name, username) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING',
         [userId, ctx.from.first_name || '', ctx.from.username || '']
       );
-      // Mostra sia inline_keyboard che reply_keyboard per UX mobile-friendly
+      // Mostra solo messaggio di onboarding senza tastiere
       await sendAndAutoDelete(ctx, messages.onboarding, {
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: MAIN_INLINE_KEYBOARD,
-          ...QUICK_REPLY_MARKUP
-        }
+        parse_mode: 'HTML'
       });
     } catch (err) {
       logger.error('Errore in /start:', err);
@@ -142,45 +120,46 @@ async function runMigrations() {
     }
   });
 
-  // Gestione callback dei pulsanti inline
-  bot.on('callback_query', handleCallback);
-
-  // Funzione riutilizzabile per mostrare la lista dei promemoria
+  // Funzione riutilizzabile per mostrare la lista dei promemoria/task
   async function showRemindersList(ctx) {
     const db = getDb();
     const userId = String(ctx.from.id);
-    const session = await sessionService.getUserSession(userId);
-    const category = session && session.filter_category;
-    let query = 'SELECT * FROM reminders WHERE user_id = $1 AND completed = FALSE';
-    const params = [userId];
-    if (category) {
-      query += ' AND category = $2';
-      params.push(category);
-    }
-    query += ' ORDER BY date, time';
-    const res = await db.query(query, params);
+    // Recupera solo task non completate, ordinate per id
+    const res = await db.query(
+      'SELECT * FROM reminders WHERE user_id = $1 AND completed = FALSE ORDER BY id ASC',
+      [userId]
+    );
     logger.info(`Trovati ${res.rows.length} promemoria per l'utente ${userId}`);
     if (!res.rows.length) {
-      await sendAndAutoDelete(ctx, 'Nessun promemoria trovato.');
+      await sendAndAutoDelete(ctx, '📭 Nessuna task o promemoria trovato. Usa /add per crearne uno!');
       return;
     }
-    // Raggruppa tutti i reminder in un unico messaggio con tastiera multipla
-    let msg = '<b>Ecco i tuoi promemoria:</b>\n';
-    const keyboard = [];
+    // Ogni task è un messaggio separato, cliccabile: cliccando sul messaggio, la task viene completata
     for (const r of res.rows) {
-      const preview = (r.completed ? '✅ ' : '') + (r.text.length > 47 ? r.text.slice(0, 47) + '…' : r.text);
-      msg += `\n${preview} [${r.category || 'generico'}]`;
-      keyboard.push([
-        { text: preview, callback_data: `done_${r.id}` }
-      ]);
+      const msg = `<code>${r.id}</code> ${r.text}`;
+      const sent = await ctx.replyWithHTML(msg, { disable_notification: true });
+      // Salva mapping messaggio-task per intercettare il click
+      await db.query('INSERT INTO user_sessions (user_id, message_id, reminder_id) VALUES ($1, $2, $3) ON CONFLICT (user_id, message_id) DO UPDATE SET reminder_id = $3', [userId, sent.message_id, r.id]);
     }
-    await sendAndAutoDeleteHTML(ctx, msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: keyboard } });
   }
 
-  // Gestione callback per pulsante "Vedi lista"
-  bot.action('show_list', async (ctx) => {
-    await ctx.answerCbQuery();
-    await showRemindersList(ctx);
+  // Handler per click su messaggio (aggiorna stato completato)
+  bot.on('message', async (ctx, next) => {
+    if (!ctx.message || !ctx.message.message_id || !ctx.from) return next();
+    const userId = String(ctx.from.id);
+    const messageId = ctx.message.message_id;
+    const db = getDb();
+    // Cerca se questo messaggio è associato a una task
+    const res = await db.query('SELECT reminder_id FROM user_sessions WHERE user_id = $1 AND message_id = $2', [userId, messageId]);
+    if (!res.rows.length) return next();
+    const reminderId = res.rows[0].reminder_id;
+    // Segna la task come completata
+    await db.query('UPDATE reminders SET completed = TRUE WHERE id = $1 AND user_id = $2', [reminderId, userId]);
+    // Cancella il messaggio
+    await ctx.deleteMessage(messageId).catch(() => {});
+    // Conferma opzionale (puoi omettere per UX pulita)
+    // await ctx.reply('✅ Task completata!');
+    logger.info(`Task completata: id=${reminderId}, utente=${userId}`);
   });
 
   // === TODO: INTEGRAZIONE FEATURE PRINCIPALI E AVANZATE ===
@@ -275,10 +254,7 @@ async function runMigrations() {
 
 // Funzione helper per inviare un messaggio e cancellarlo dopo 30 minuti
 async function sendAndAutoDelete(ctx, text, extra = {}) {
-  if (!extra.reply_markup) extra.reply_markup = {};
-  if (!extra.reply_markup.keyboard) {
-    Object.assign(extra.reply_markup, QUICK_REPLY_MARKUP);
-  }
+  // Rimossa gestione reply_keyboard
   const sent = await ctx.reply(text, extra);
   setTimeout(() => {
     ctx.deleteMessage(sent.message_id).catch(() => {});
@@ -290,10 +266,7 @@ async function sendAndAutoDelete(ctx, text, extra = {}) {
 }
 // Variante per HTML
 async function sendAndAutoDeleteHTML(ctx, text, extra = {}) {
-  if (!extra.reply_markup) extra.reply_markup = {};
-  if (!extra.reply_markup.keyboard) {
-    Object.assign(extra.reply_markup, QUICK_REPLY_MARKUP);
-  }
+  // Rimossa gestione reply_keyboard
   const sent = await ctx.replyWithHTML(text, extra);
   setTimeout(() => {
     ctx.deleteMessage(sent.message_id).catch(() => {});
@@ -377,11 +350,10 @@ bot.on('text', async (ctx, next) => {
       await sendAndAutoDelete(ctx, '❌ Testo promemoria non valido. Deve essere tra 2 e 200 caratteri.');
       return;
     }
-    const defaultTime = '08:00';
     const db = getDb();
     const res = await db.query(
-      'INSERT INTO reminders (user_id, text, category, time) VALUES ($1, $2, $3, $4) RETURNING id',
-      [userId, text, session.add_category, defaultTime]
+      'INSERT INTO reminders (user_id, text, category) VALUES ($1, $2, $3) RETURNING id',
+      [userId, text, session.add_category]
     );
     const reminderId = res.rows[0].id;
     await sendAndAutoDeleteHTML(
@@ -397,34 +369,46 @@ bot.on('text', async (ctx, next) => {
 
 // /tasks command: mostra la lista delle task (promemoria non completati)
 bot.command('tasks', async (ctx) => {
-  const userId = String(ctx.from.id);
   try {
-    const db = getDb();
-    const res = await db.query(
-      'SELECT * FROM reminders WHERE user_id = $1 AND completed = FALSE ORDER BY date, time',
-      [userId]
-    );
-    if (!res.rows.length) {
-      await sendAndAutoDelete(ctx, 'Nessuna task trovata.', QUICK_REPLY_MARKUP);
-      return;
-    }
-    // Suddividi in blocchi per non superare il limite di Telegram (4096 caratteri)
-    let msg = '<b>Le tue task:</b>\n';
-    const blocks = [];
-    for (const r of res.rows) {
-      const preview = (r.text.length > 47 ? r.text.slice(0, 47) + '…' : r.text);
-      msg += `\n${preview} [${r.category || 'generico'}]`;
-      if (msg.length > 3500) { // margine di sicurezza
-        blocks.push(msg);
-        msg = '';
-      }
-    }
-    if (msg) blocks.push(msg);
-    for (const block of blocks) {
-      await sendAndAutoDeleteHTML(ctx, block, { parse_mode: 'HTML', ...QUICK_REPLY_MARKUP });
-    }
+    await showRemindersList(ctx);
   } catch (err) {
     logger.error('Errore in /tasks:', err);
-    await sendAndAutoDelete(ctx, '❌ Errore interno.', QUICK_REPLY_MARKUP);
+    await sendAndAutoDelete(ctx, '❌ Errore interno.');
   }
+});
+
+// Procedura guidata creazione task solo testo
+bot.command('add', async (ctx) => {
+  const userId = String(ctx.from.id);
+  await sessionService.setUserSession(userId, { add_step: 'text' });
+  await sendAndAutoDelete(ctx, 'Scrivi il testo della task (2-200 caratteri).');
+});
+
+// Handler per la procedura guidata
+bot.on('text', async (ctx, next) => {
+  const userId = String(ctx.from.id);
+  const session = await sessionService.getUserSession(userId);
+  if (!session || session.add_step !== 'text') return next();
+
+  // Step unico: testo
+  const text = sanitizeInput(ctx.message.text);
+  if (!validateReminderText(text)) {
+    await sendAndAutoDelete(ctx, '❌ Testo non valido. Deve essere tra 2 e 200 caratteri.');
+    return;
+  }
+  const db = getDb();
+  try {
+    const res = await db.query(
+      'INSERT INTO reminders (user_id, text) VALUES ($1, $2) RETURNING id',
+      [userId, text]
+    );
+    const reminderId = res.rows[0].id;
+    logger.info(`Task creata: id=${reminderId}, utente=${userId}, testo='${text}'`);
+    await sendAndAutoDeleteHTML(ctx, `✅ Task creata: <b>${text}</b>\nID: <code>${reminderId}</code>`, { parse_mode: 'HTML' });
+    await sessionService.setUserSession(userId, {}); // reset
+  } catch (err) {
+    logger.error('Errore durante la creazione task:', err);
+    await sendAndAutoDelete(ctx, '❌ Errore durante la creazione della task. Riprova.');
+  }
+  return;
 });
