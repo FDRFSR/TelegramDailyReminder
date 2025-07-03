@@ -511,5 +511,4 @@ function startTaskSummaryScheduler(bot) {
 }
 
 // Avvia il riepilogo automatico dopo il daily notification scheduler
-startDailyNotifications(bot);
 startTaskSummaryScheduler(bot);
