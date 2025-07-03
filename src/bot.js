@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
 const sessionService = require('./services/sessionService');
+const { CronJob } = require('cron');
 
 // Load environment variables
 dotenv.config();
@@ -136,11 +137,36 @@ async function runMigrations() {
     }
     // Ogni task è un messaggio separato, cliccabile: cliccando sul messaggio, la task viene completata
     for (const r of res.rows) {
-      const msg = `<code>${r.id}</code> ${r.text}`;
+      const msg = `${r.text}`;
       const sent = await ctx.replyWithHTML(msg, { disable_notification: true });
       // Salva mapping messaggio-task per intercettare il click
       await db.query('INSERT INTO user_sessions (user_id, message_id, reminder_id) VALUES ($1, $2, $3) ON CONFLICT (user_id, message_id) DO UPDATE SET reminder_id = $3', [userId, sent.message_id, r.id]);
     }
+    // Pianifica la cancellazione di tutti i messaggi task dopo 30 minuti
+    scheduleDeleteAllUserMessages(ctx);
+  }
+
+  // Funzione helper per cancellare tutti i messaggi della chat utente dopo 30 minuti (estesa a TUTTI i messaggi)
+  async function scheduleDeleteAllUserMessages(ctx) {
+    const userId = String(ctx.from.id);
+    const db = getDb();
+    // Recupera tutti i message_id associati all'utente dalla tabella user_sessions
+    const res1 = await db.query('SELECT message_id FROM user_sessions WHERE user_id = $1', [userId]);
+    const messageIds = res1.rows.map(r => r.message_id);
+    // Recupera anche gli ultimi 100 messaggi della chat (per sicurezza, in caso di messaggi non tracciati)
+    let extraIds = [];
+    try {
+      const chatId = ctx.chat.id;
+      // Telegram non permette di elencare tutti i messaggi, ma puoi tenere traccia dei message_id inviati dal bot
+      // Qui si cancella solo ciò che è stato tracciato
+    } catch (e) {}
+    setTimeout(async () => {
+      for (const messageId of [...messageIds, ...extraIds]) {
+        await ctx.deleteMessage(messageId).catch(() => {});
+      }
+      // Pulisci anche la tabella user_sessions
+      await db.query('DELETE FROM user_sessions WHERE user_id = $1', [userId]);
+    }, 1800000); // 30 minuti
   }
 
   // Handler per click su messaggio (aggiorna stato completato)
@@ -254,20 +280,25 @@ async function runMigrations() {
 
 // Funzione helper per inviare un messaggio e cancellarlo dopo 30 minuti
 async function sendAndAutoDelete(ctx, text, extra = {}) {
-  // Rimossa gestione reply_keyboard
   const sent = await ctx.reply(text, extra);
+  // Traccia il message_id in user_sessions per la cancellazione globale
+  const db = getDb();
+  const userId = String(ctx.from.id);
+  await db.query('INSERT INTO user_sessions (user_id, message_id) VALUES ($1, $2) ON CONFLICT (user_id, message_id) DO NOTHING', [userId, sent.message_id]);
   setTimeout(() => {
     ctx.deleteMessage(sent.message_id).catch(() => {});
     if (ctx.message && ctx.message.message_id) {
       ctx.deleteMessage(ctx.message.message_id).catch(() => {});
     }
-  }, 1800000); // 30 minuti
+  }, 1800000);
   return sent;
 }
-// Variante per HTML
 async function sendAndAutoDeleteHTML(ctx, text, extra = {}) {
-  // Rimossa gestione reply_keyboard
   const sent = await ctx.replyWithHTML(text, extra);
+  // Traccia il message_id in user_sessions per la cancellazione globale
+  const db = getDb();
+  const userId = String(ctx.from.id);
+  await db.query('INSERT INTO user_sessions (user_id, message_id) VALUES ($1, $2) ON CONFLICT (user_id, message_id) DO NOTHING', [userId, sent.message_id]);
   setTimeout(() => {
     ctx.deleteMessage(sent.message_id).catch(() => {});
     if (ctx.message && ctx.message.message_id) {
@@ -412,3 +443,34 @@ bot.on('text', async (ctx, next) => {
   }
   return;
 });
+
+// === Scheduler riepilogo automatico task ogni 30 minuti ===
+function startTaskSummaryScheduler(bot) {
+  // Ogni 30 minuti, dalle 8:00 alle 22:00
+  const job = new CronJob('0,30 8-22 * * *', async () => {
+    const db = getDb();
+    // Recupera tutti gli utenti
+    const usersRes = await db.query('SELECT id FROM users');
+    for (const user of usersRes.rows) {
+      const userId = String(user.id);
+      // Recupera le task non completate
+      const tasksRes = await db.query('SELECT text FROM reminders WHERE user_id = $1 AND completed = FALSE ORDER BY id ASC', [userId]);
+      if (!tasksRes.rows.length) continue;
+      // Costruisci il riepilogo
+      let msg = '<b>Riepilogo task da completare:</b>\n';
+      for (const t of tasksRes.rows) {
+        msg += `\n${t.text}`;
+      }
+      try {
+        await bot.telegram.sendMessage(userId, msg, { parse_mode: 'HTML' });
+      } catch (e) {
+        logger.warn('Errore invio riepilogo automatico a utente ' + userId, e);
+      }
+    }
+  }, null, true, 'Europe/Rome');
+  job.start();
+}
+
+// Avvia il riepilogo automatico dopo il daily notification scheduler
+startDailyNotifications(bot);
+startTaskSummaryScheduler(bot);
