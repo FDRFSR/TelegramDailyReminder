@@ -11,6 +11,9 @@ const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 const tasks = Object.create(null); // più sicuro di {}
 const userStates = Object.create(null);
 
+// Salva i messaggi inviati per ogni utente
+const sentMessages = Object.create(null); // { userId: [messageId, ...] }
+
 function mainMenu() {
   return Markup.inlineKeyboard([
     [Markup.button.callback('➕ Crea Task', 'CREATE_TASK')],
@@ -34,38 +37,84 @@ function toggleTask(userId, taskId) {
   if (task) task.completed = !task.completed;
 }
 
+// Funzione per cancellare le task vecchie di 10 minuti
+function cleanOldTasks() {
+  const now = Date.now();
+  const tenMinutes = 10 * 60 * 1000;
+  for (const userId in tasks) {
+    if (Array.isArray(tasks[userId])) {
+      tasks[userId] = tasks[userId].filter(task => now - Number(task.id) < tenMinutes);
+    }
+  }
+}
+
+// Funzione per registrare i messaggi inviati
+async function trackMessage(ctx, replyPromise) {
+  const userId = ctx.from.id;
+  const msg = await replyPromise;
+  if (!sentMessages[userId]) sentMessages[userId] = [];
+  sentMessages[userId].push({ id: msg.message_id, date: Date.now(), chatId: msg.chat.id });
+}
+
+// Funzione per cancellare i messaggi vecchi di 10 minuti
+async function cleanOldMessages() {
+  const now = Date.now();
+  const tenMinutes = 10 * 60 * 1000;
+  for (const userId in sentMessages) {
+    const userMsgs = sentMessages[userId] || [];
+    const toDelete = userMsgs.filter(m => now - m.date >= tenMinutes);
+    sentMessages[userId] = userMsgs.filter(m => now - m.date < tenMinutes);
+    for (const msg of toDelete) {
+      try {
+        await bot.telegram.deleteMessage(msg.chatId, msg.id);
+      } catch (e) {
+        // Ignora errori se il messaggio è già stato cancellato
+      }
+    }
+  }
+}
+
+// Avvia la pulizia automatica ogni 10 minuti
+setInterval(cleanOldTasks, 10 * 60 * 1000);
+setInterval(cleanOldMessages, 10 * 60 * 1000);
+
+// Modifica tutte le risposte ctx.reply per essere tracciate
+function replyAndTrack(ctx, ...args) {
+  return trackMessage(ctx, ctx.reply(...args));
+}
+
 bot.start((ctx) => {
   userStates[ctx.from.id] = null;
-  ctx.reply('Benvenuto! Usa i tasti qui sotto per gestire le tue task:', mainMenu());
+  replyAndTrack(ctx, 'Benvenuto! Usa i tasti qui sotto per gestire le tue task:', mainMenu());
 });
 
 bot.action('CREATE_TASK', (ctx) => {
   userStates[ctx.from.id] = 'AWAITING_TASK';
-  ctx.reply('Scrivi la task da aggiungere oppure /annulla per tornare al menu.');
+  replyAndTrack(ctx, 'Scrivi la task da aggiungere oppure /annulla per tornare al menu.');
 });
 
 bot.hears(/\/annulla/i, (ctx) => {
   userStates[ctx.from.id] = null;
-  ctx.reply('Operazione annullata.', mainMenu());
+  replyAndTrack(ctx, 'Operazione annullata.', mainMenu());
 });
 
 bot.on('text', (ctx) => {
   if (userStates[ctx.from.id] !== 'AWAITING_TASK') return;
   const text = ctx.message.text.trim();
   if (!text || text.startsWith('/')) {
-    ctx.reply('La task non può essere vuota. Riprova o usa /annulla.');
+    replyAndTrack(ctx, 'La task non può essere vuota. Riprova o usa /annulla.');
     return;
   }
   addTask(ctx.from.id, text);
   userStates[ctx.from.id] = null;
-  ctx.reply('Task aggiunta!', mainMenu());
+  replyAndTrack(ctx, 'Task aggiunta!', mainMenu());
 });
 
 bot.action('SHOW_LIST', (ctx) => {
   const userId = ctx.from.id;
   const userTasks = getTaskList(userId);
   if (userTasks.length === 0) {
-    ctx.reply('Nessuna task trovata.', mainMenu());
+    replyAndTrack(ctx, 'Nessuna task trovata.', mainMenu());
     return;
   }
   const buttons = userTasks.map(task => [
@@ -74,7 +123,7 @@ bot.action('SHOW_LIST', (ctx) => {
       `COMPLETE_${task.id}`
     )
   ]);
-  ctx.reply('Le tue task:', Markup.inlineKeyboard(buttons));
+  replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(buttons));
 });
 
 bot.action(/COMPLETE_(.+)/, (ctx) => {
