@@ -111,14 +111,7 @@ bot.hears('➕ Crea Task', (ctx) => {
 });
 
 bot.hears('📋 Visualizza Lista', (ctx) => {
-  const userId = ctx.from.id;
-  let userTasks = taskService.getTaskList(userId);
-  if (!Array.isArray(userTasks) || userTasks.length === 0) {
-    replyAndTrack(ctx, '🎉 Nessuna task attiva! Goditi il tuo tempo libero.', mainMenuKeyboard());
-    return;
-  }
-  userTasks = sortTasks(userTasks);
-  replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(taskButtons(userTasks)));
+  showTaskList(ctx, { withMenuButtons: true, useReply: true });
 });
 
 bot.action('CREATE_TASK', (ctx) => {
@@ -149,19 +142,7 @@ bot.on('text', (ctx) => {
 });
 
 bot.action('SHOW_LIST', (ctx) => {
-  const userId = ctx.from.id;
-  let userTasks = taskService.getTaskList(userId);
-  if (!Array.isArray(userTasks) || userTasks.length === 0) {
-    replyAndTrack(ctx, '🎉 Nessuna task attiva! Goditi il tuo tempo libero.', mainMenu());
-    return;
-  }
-  userTasks = sortTasks(userTasks);
-  const buttons = taskButtons(userTasks);
-  buttons.push([
-    Markup.button.callback('➕ Nuova Task', 'CREATE_TASK'),
-    Markup.button.callback('🔙 Menu', 'BACK_TO_MENU')
-  ]);
-  replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(buttons));
+  showTaskList(ctx, { withMenuButtons: true, useReply: true });
 });
 
 bot.action('BACK_TO_MENU', (ctx) => {
@@ -253,12 +234,37 @@ bot.action(/DELETE_CONFIRM_(.+)/, async (ctx) => {
 });
 
 bot.action('CANCEL_DELETE', async (ctx) => {
-  // Refresh la lista task
+  await showTaskList(ctx, { withMenuButtons: false, useReply: false });
+});
+
+/**
+ * Visualizza la lista delle task per l'utente
+ * @param {import('telegraf').Context} ctx
+ * @param {boolean} withMenuButtons - se true, aggiunge i bottoni Nuova Task/Menu
+ * @param {boolean} useReply - se true, usa replyAndTrack, altrimenti editMessageText
+ */
+async function showTaskList(ctx, { withMenuButtons = false, useReply = true } = {}) {
   const userId = ctx.from.id;
   let userTasks = taskService.getTaskList(userId);
   userTasks = sortTasks(userTasks);
-  await ctx.editMessageText('Le tue task:', Markup.inlineKeyboard(taskButtons(userTasks)));
-});
+  if (!Array.isArray(userTasks) || userTasks.length === 0) {
+    const msg = '🎉 Nessuna task attiva! Goditi il tuo tempo libero.';
+    if (useReply) return replyAndTrack(ctx, msg, mainMenuKeyboard());
+    else return ctx.editMessageText(msg, mainMenu());
+  }
+  const buttons = taskButtons(userTasks);
+  if (withMenuButtons) {
+    buttons.push([
+      Markup.button.callback('➕ Nuova Task', 'CREATE_TASK'),
+      Markup.button.callback('🔙 Menu', 'BACK_TO_MENU')
+    ]);
+  }
+  if (useReply) {
+    return replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(buttons));
+  } else {
+    return ctx.editMessageText('Le tue task:', Markup.inlineKeyboard(buttons));
+  }
+}
 
 /**
  * Send reminders every 30 minutes except 22-08
