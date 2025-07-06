@@ -8,6 +8,7 @@ A simple Telegram bot to manage daily tasks with inline and reply keyboard butto
 - Prioritized tasks are always shown at the top of the list
 - Persistent reply keyboard for quick access
 - Automatic deletion of bot messages after 10 minutes (tasks remain until completed)
+- **Automatic reminder:** every 30 minutes (except between 22:00 and 08:00), the bot sends a reminder with your active tasks
 
 ## Usage
 - **/start**: Shows the main menu with reply keyboard
@@ -35,6 +36,7 @@ TELEGRAM_BOT_TOKEN=your_token node bot.js
 - All tasks are stored in memory (per user). No database is required.
 - All bot messages are deleted after 10 minutes for privacy/cleanliness.
 - The reply keyboard is always visible for quick actions.
+- Reminders are not sent between 22:00 and 08:00.
 
 ---
 
