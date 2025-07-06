@@ -197,6 +197,25 @@ bot.action(/PRIORITY_(.+)/, (ctx) => {
   ctx.editMessageReplyMarkup(Markup.inlineKeyboard(buttons).reply_markup);
 });
 
+// Reminder automatico ogni 30 minuti (escluso tra le 22 e le 08)
+function sendReminders() {
+  const now = new Date();
+  const hour = now.getHours();
+  if (hour >= 22 || hour < 8) return; // Non inviare tra le 22 e le 08
+  for (const userId in tasks) {
+    const userTasks = getTaskList(userId);
+    if (userTasks.length > 0) {
+      bot.telegram.sendMessage(
+        userId,
+        '⏰ Reminder! Hai ancora queste task da completare:\n' +
+          sortTasks(userTasks).map(t => `${t.priority ? '🌟' : '⭐'} ${t.text}`).join('\n'),
+        mainMenuKeyboard()
+      ).catch(() => {}); // Ignora errori (es. utente ha bloccato il bot)
+    }
+  }
+}
+setInterval(sendReminders, 30 * 60 * 1000);
+
 bot.launch().catch((err) => {
   console.error('Errore durante l\'avvio del bot:', err);
   process.exit(1);
