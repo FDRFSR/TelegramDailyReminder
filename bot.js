@@ -1,6 +1,7 @@
 // Migliorato: gestione errori, struttura funzioni, commenti best practice
 const { Telegraf, Markup } = require('telegraf');
 require('dotenv').config();
+const constants = require('./config/constants');
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   console.error("Errore: la variabile d'ambiente TELEGRAM_BOT_TOKEN non è impostata.");
@@ -117,7 +118,7 @@ function replyAndTrack(ctx, ...args) {
  */
 async function cleanOldMessages() {
   const now = Date.now();
-  const tenMinutes = 10 * 60 * 1000;
+  const tenMinutes = constants.MESSAGE_LIFETIME;
   for (const userId in sentMessages) {
     if (!Array.isArray(sentMessages[userId]) || sentMessages[userId].length === 0) {
       delete sentMessages[userId];
@@ -143,7 +144,7 @@ async function cleanOldMessages() {
   }
 }
 
-setInterval(cleanOldMessages, 60 * 1000);
+setInterval(cleanOldMessages, constants.CLEANUP_INTERVAL);
 
 // --- BOT HANDLERS ---
 
@@ -186,8 +187,8 @@ bot.on('text', (ctx) => {
     replyAndTrack(ctx, 'La task non può essere vuota. Riprova o usa /annulla.');
     return;
   }
-  if (text.length > 200) {
-    replyAndTrack(ctx, 'La task è troppo lunga (max 200 caratteri).');
+  if (text.length > constants.MAX_TASK_LENGTH) {
+    replyAndTrack(ctx, `La task è troppo lunga (max ${constants.MAX_TASK_LENGTH} caratteri).`);
     return;
   }
   addTask(ctx.from.id, text);
@@ -278,7 +279,7 @@ bot.action(/PRIORITY_(.+)/, async (ctx) => {
 function sendReminders() {
   const now = new Date();
   const hour = now.getHours();
-  if (hour >= 22 || hour < 8) return;
+  if (hour >= constants.QUIET_HOURS.start || hour < constants.QUIET_HOURS.end) return;
   for (const userId in tasks) {
     const userTasks = getTaskList(userId);
     if (userTasks.length > 0) {
@@ -291,7 +292,7 @@ function sendReminders() {
     }
   }
 }
-setInterval(sendReminders, 30 * 60 * 1000);
+setInterval(sendReminders, constants.REMINDER_INTERVAL);
 
 bot.launch().then(() => {
   console.log('✅ Bot started and listening for updates!');
