@@ -43,17 +43,6 @@ function toggleTask(userId, taskId) {
   if (task) task.completed = !task.completed;
 }
 
-// Funzione per cancellare le task vecchie di 10 minuti
-function cleanOldTasks() {
-  const now = Date.now();
-  const tenMinutes = 10 * 60 * 1000;
-  for (const userId in tasks) {
-    if (Array.isArray(tasks[userId])) {
-      tasks[userId] = tasks[userId].filter(task => now - Number(task.id) < tenMinutes);
-    }
-  }
-}
-
 // Funzione per registrare i messaggi inviati (privati e gruppi)
 async function trackMessage(ctx, replyPromise) {
   const userId = ctx.from.id;
@@ -68,23 +57,31 @@ async function cleanOldMessages() {
   const now = Date.now();
   const tenMinutes = 10 * 60 * 1000;
   for (const userId in sentMessages) {
-    const userMsgs = sentMessages[userId] || [];
+    // Ottimizzazione: elimina direttamente se la lista è vuota
+    if (!sentMessages[userId] || sentMessages[userId].length === 0) {
+      delete sentMessages[userId];
+      continue;
+    }
+    const userMsgs = sentMessages[userId];
     const toDelete = userMsgs.filter(m => now - m.date >= tenMinutes);
     sentMessages[userId] = userMsgs.filter(m => now - m.date < tenMinutes);
     for (const msg of toDelete) {
       try {
-        // Forza la cancellazione anche nelle chat private
         await bot.telegram.deleteMessage(msg.chatId, msg.id);
       } catch (e) {
-        // Ignora errori se il messaggio è già stato cancellato o non permesso
+        // Log solo in debug
+        // console.debug('Errore cancellazione messaggio:', e.message);
       }
+    }
+    // Se dopo la pulizia non ci sono più messaggi, elimina la chiave
+    if (sentMessages[userId].length === 0) {
+      delete sentMessages[userId];
     }
   }
 }
 
-// Avvia la pulizia automatica ogni 10 minuti
-setInterval(cleanOldTasks, 10 * 60 * 1000);
-setInterval(cleanOldMessages, 10 * 60 * 1000);
+// Avvia la pulizia automatica solo dei messaggi, non delle task
+setInterval(cleanOldMessages, 60 * 1000);
 
 // Modifica tutte le risposte ctx.reply per essere tracciate
 function replyAndTrack(ctx, ...args) {
