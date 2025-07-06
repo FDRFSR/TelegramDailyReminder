@@ -1,0 +1,7 @@
+module.exports = {
+  MAX_TASK_LENGTH: 200,
+  CLEANUP_INTERVAL: 60 * 1000,
+  REMINDER_INTERVAL: 30 * 60 * 1000,
+  MESSAGE_LIFETIME: 10 * 60 * 1000,
+  QUIET_HOURS: { start: 22, end: 8 }
+};

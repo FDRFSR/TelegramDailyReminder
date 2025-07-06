@@ -2,6 +2,8 @@
 const { Telegraf, Markup } = require('telegraf');
 require('dotenv').config();
 const constants = require('./config/constants');
+const TaskService = require('./services/taskService');
+const taskService = new TaskService();
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   console.error("Errore: la variabile d'ambiente TELEGRAM_BOT_TOKEN non è impostata.");
@@ -9,7 +11,6 @@ if (!process.env.TELEGRAM_BOT_TOKEN) {
 }
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
-const tasks = Object.create(null); // più sicuro di {}
 const userStates = Object.create(null);
 
 // Salva i messaggi inviati per ogni utente
@@ -39,55 +40,6 @@ function mainMenuKeyboard() {
  */
 function getTaskList(userId) {
   return Array.isArray(tasks[userId]) ? tasks[userId] : [];
-}
-
-/**
- * Add a new task for a user
- * @param {number|string} userId
- * @param {string} text
- */
-function addTask(userId, text) {
-  if (!Array.isArray(tasks[userId])) tasks[userId] = [];
-  const id = Date.now().toString();
-  tasks[userId].push({ id, text, completed: false, priority: false });
-}
-
-/**
- * Toggle priority for a task
- * @param {number|string} userId
- * @param {string} taskId
- */
-function togglePriority(userId, taskId) {
-  const userTasks = getTaskList(userId);
-  const task = userTasks.find(t => t.id === taskId);
-  if (task) task.priority = !task.priority;
-}
-
-function toggleTask(userId, taskId) {
-  const userTasks = getTaskList(userId);
-  const task = userTasks.find(t => t.id === taskId);
-  if (task) task.completed = !task.completed;
-}
-
-/**
- * Utility: sort tasks (priority first)
- * @param {Array} tasks
- * @returns {Array}
- */
-function sortTasks(tasks) {
-  return [...tasks].sort((a, b) => (b.priority ? 1 : 0) - (a.priority ? 1 : 0));
-}
-
-/**
- * Utility: generate inline buttons for task list
- * @param {Array} userTasks
- * @returns {Array}
- */
-function taskButtons(userTasks) {
-  return userTasks.map(task => [
-    Markup.button.callback(`${task.priority ? '🌟' : '⭐'} ${task.text}`, `COMPLETE_${task.id}`),
-    Markup.button.callback(task.priority ? '⬇️' : '⬆️', `PRIORITY_${task.id}`)
-  ]);
 }
 
 /**
@@ -160,7 +112,7 @@ bot.hears('➕ Crea Task', (ctx) => {
 
 bot.hears('📋 Visualizza Lista', (ctx) => {
   const userId = ctx.from.id;
-  let userTasks = getTaskList(userId);
+  let userTasks = taskService.getTaskList(userId);
   if (!Array.isArray(userTasks) || userTasks.length === 0) {
     replyAndTrack(ctx, 'Nessuna task trovata.', mainMenuKeyboard());
     return;
@@ -191,14 +143,14 @@ bot.on('text', (ctx) => {
     replyAndTrack(ctx, `La task è troppo lunga (max ${constants.MAX_TASK_LENGTH} caratteri).`);
     return;
   }
-  addTask(ctx.from.id, text);
+  taskService.addTask(ctx.from.id, text);
   userStates[ctx.from.id] = null;
   replyAndTrack(ctx, 'Task aggiunta!', mainMenu());
 });
 
 bot.action('SHOW_LIST', (ctx) => {
   const userId = ctx.from.id;
-  let userTasks = getTaskList(userId);
+  let userTasks = taskService.getTaskList(userId);
   if (!Array.isArray(userTasks) || userTasks.length === 0) {
     replyAndTrack(ctx, 'Nessuna task trovata.', mainMenu());
     return;
@@ -219,14 +171,14 @@ bot.action('BACK_TO_MENU', (ctx) => {
 bot.action(/COMPLETE_(.+)/, async (ctx) => {
   const taskId = ctx.match[1];
   const userId = ctx.from.id;
-  let userTasks = getTaskList(userId);
+  let userTasks = taskService.getTaskList(userId);
   if (!Array.isArray(userTasks) || userTasks.length === 0) {
     await replyAndTrack(ctx, 'Nessuna task trovata.', mainMenu());
     return;
   }
   // Remove the completed task
-  userTasks = userTasks.filter(task => task.id !== taskId);
-  tasks[userId] = userTasks;
+  taskService.removeTask(userId, taskId);
+  userTasks = taskService.getTaskList(userId);
   try {
     await ctx.answerCbQuery('Task completata e rimossa!');
   } catch (e) {}
@@ -236,14 +188,12 @@ bot.action(/COMPLETE_(.+)/, async (ctx) => {
     try {
       await ctx.editMessageText('Nessuna task trovata.', mainMenu());
     } catch (e) {
-      // fallback: send new message if edit fails
       replyAndTrack(ctx, 'Nessuna task trovata.', mainMenu());
     }
   } else {
     try {
       await ctx.editMessageReplyMarkup(Markup.inlineKeyboard(taskButtons(userTasks)).reply_markup);
     } catch (e) {
-      // fallback: send new message if edit fails
       replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(taskButtons(userTasks)));
     }
   }
@@ -252,12 +202,12 @@ bot.action(/COMPLETE_(.+)/, async (ctx) => {
 bot.action(/PRIORITY_(.+)/, async (ctx) => {
   const taskId = ctx.match[1];
   const userId = ctx.from.id;
-  togglePriority(userId, taskId);
+  taskService.togglePriority(userId, taskId);
   try {
     await ctx.answerCbQuery('Priorità aggiornata!');
   } catch (e) {}
   // Refresh lista
-  let userTasks = getTaskList(userId);
+  let userTasks = taskService.getTaskList(userId);
   userTasks = sortTasks(userTasks);
   const buttons = taskButtons(userTasks);
   if (ctx.update.callback_query.message.reply_markup.inline_keyboard.some(row => row.some(btn => btn.text === '➕ Nuova Task'))) {
@@ -280,8 +230,8 @@ function sendReminders() {
   const now = new Date();
   const hour = now.getHours();
   if (hour >= constants.QUIET_HOURS.start || hour < constants.QUIET_HOURS.end) return;
-  for (const userId in tasks) {
-    const userTasks = getTaskList(userId);
+  for (const userId in taskService.tasks) {
+    const userTasks = taskService.getTaskList(userId);
     if (userTasks.length > 0) {
       bot.telegram.sendMessage(
         userId,
