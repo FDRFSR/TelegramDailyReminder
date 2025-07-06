@@ -37,13 +37,6 @@ function addTask(userId, text) {
   tasks[userId].push({ id, text, completed: false, priority: false });
 }
 
-// Modifica task
-function editTask(userId, taskId, newText) {
-  const userTasks = getTaskList(userId);
-  const task = userTasks.find(t => t.id === taskId);
-  if (task) task.text = newText;
-}
-
 // Cambia priorità
 function togglePriority(userId, taskId) {
   const userTasks = getTaskList(userId);
@@ -136,18 +129,6 @@ bot.hears(/\/annulla/i, (ctx) => {
 
 bot.on('text', (ctx) => {
   const userId = ctx.from.id;
-  const state = userStates[userId];
-  if (state && state.state === 'EDITING_TASK') {
-    const newText = ctx.message.text.trim();
-    if (!newText || newText.startsWith('/')) {
-      replyAndTrack(ctx, 'Il testo non può essere vuoto. Riprova o usa /annulla.');
-      return;
-    }
-    editTask(userId, state.taskId, newText);
-    userStates[userId] = null;
-    replyAndTrack(ctx, 'Task modificata!', mainMenu());
-    return;
-  }
   if (userStates[userId] !== 'AWAITING_TASK') return;
   const text = ctx.message.text.trim();
   if (!text || text.startsWith('/')) {
@@ -197,20 +178,6 @@ bot.action(/COMPLETE_(.+)/, (ctx) => {
   }
 });
 
-// Gestione modifica task
-bot.action(/EDIT_(.+)/, (ctx) => {
-  const taskId = ctx.match[1];
-  const userId = ctx.from.id;
-  const userTasks = getTaskList(userId);
-  const task = userTasks.find(t => t.id === taskId);
-  if (!task) {
-    ctx.answerCbQuery('Task non trovata.');
-    return;
-  }
-  userStates[userId] = { state: 'EDITING_TASK', taskId };
-  replyAndTrack(ctx, `Invia il nuovo testo per la task: "${task.text}"\nOppure /annulla per annullare.`, mainMenuKeyboard());
-});
-
 // Gestione priorità
 bot.action(/PRIORITY_(.+)/, (ctx) => {
   const taskId = ctx.match[1];
@@ -242,7 +209,6 @@ process.once('SIGTERM', () => bot.stop('SIGTERM'));
 function taskButtons(userTasks) {
   return userTasks.map(task => [
     Markup.button.callback(`${task.priority ? '🌟' : '⭐'} ${task.completed ? '✅' : '⬜️'} ${task.text}`, `COMPLETE_${task.id}`),
-    Markup.button.callback('✏️', `EDIT_${task.id}`),
     Markup.button.callback(task.priority ? '⬇️' : '⬆️', `PRIORITY_${task.id}`)
   ]);
 }
