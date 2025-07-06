@@ -34,7 +34,21 @@ function getTaskList(userId) {
 function addTask(userId, text) {
   if (!Array.isArray(tasks[userId])) tasks[userId] = [];
   const id = Date.now().toString();
-  tasks[userId].push({ id, text, completed: false });
+  tasks[userId].push({ id, text, completed: false, priority: false });
+}
+
+// Modifica task
+function editTask(userId, taskId, newText) {
+  const userTasks = getTaskList(userId);
+  const task = userTasks.find(t => t.id === taskId);
+  if (task) task.text = newText;
+}
+
+// Cambia priorità
+function togglePriority(userId, taskId) {
+  const userTasks = getTaskList(userId);
+  const task = userTasks.find(t => t.id === taskId);
+  if (task) task.priority = !task.priority;
 }
 
 function toggleTask(userId, taskId) {
@@ -101,19 +115,13 @@ bot.hears('➕ Crea Task', (ctx) => {
 
 bot.hears('📋 Visualizza Lista', (ctx) => {
   const userId = ctx.from.id;
-  const userTasks = getTaskList(userId);
+  let userTasks = getTaskList(userId);
   if (userTasks.length === 0) {
     ctx.reply('Nessuna task trovata.', mainMenuKeyboard());
     return;
   }
-  const buttons = userTasks.map(task => [
-    Markup.button.callback(
-      `${task.completed ? '✅' : '⬜️'} ${task.text}`,
-      `COMPLETE_${task.id}`
-    )
-  ]);
-  // Inline per completamento, tastiera per navigazione
-  ctx.reply('Le tue task:', Markup.inlineKeyboard(buttons));
+  userTasks = sortTasks(userTasks);
+  ctx.reply('Le tue task:', Markup.inlineKeyboard(taskButtons(userTasks)));
 });
 
 bot.action('CREATE_TASK', (ctx) => {
@@ -127,7 +135,20 @@ bot.hears(/\/annulla/i, (ctx) => {
 });
 
 bot.on('text', (ctx) => {
-  if (userStates[ctx.from.id] !== 'AWAITING_TASK') return;
+  const userId = ctx.from.id;
+  const state = userStates[userId];
+  if (state && state.state === 'EDITING_TASK') {
+    const newText = ctx.message.text.trim();
+    if (!newText || newText.startsWith('/')) {
+      replyAndTrack(ctx, 'Il testo non può essere vuoto. Riprova o usa /annulla.');
+      return;
+    }
+    editTask(userId, state.taskId, newText);
+    userStates[userId] = null;
+    replyAndTrack(ctx, 'Task modificata!', mainMenu());
+    return;
+  }
+  if (userStates[userId] !== 'AWAITING_TASK') return;
   const text = ctx.message.text.trim();
   if (!text || text.startsWith('/')) {
     replyAndTrack(ctx, 'La task non può essere vuota. Riprova o usa /annulla.');
@@ -140,18 +161,13 @@ bot.on('text', (ctx) => {
 
 bot.action('SHOW_LIST', (ctx) => {
   const userId = ctx.from.id;
-  const userTasks = getTaskList(userId);
+  let userTasks = getTaskList(userId);
   if (userTasks.length === 0) {
     replyAndTrack(ctx, 'Nessuna task trovata.', mainMenu());
     return;
   }
-  const buttons = userTasks.map(task => [
-    Markup.button.callback(
-      `${task.completed ? '✅' : '⬜️'} ${task.text}`,
-      `COMPLETE_${task.id}`
-    )
-  ]);
-  // Aggiungi pulsanti per tornare al menu o aggiungere una nuova task
+  userTasks = sortTasks(userTasks);
+  const buttons = taskButtons(userTasks);
   buttons.push([
     Markup.button.callback('➕ Nuova Task', 'CREATE_TASK'),
     Markup.button.callback('🔙 Menu', 'BACK_TO_MENU')
@@ -172,17 +188,46 @@ bot.action(/COMPLETE_(.+)/, (ctx) => {
   tasks[userId] = userTasks;
   ctx.answerCbQuery('Task completata e rimossa!');
   // Refresh list
-  const buttons = userTasks.map(task => [
-    Markup.button.callback(
-      `${task.completed ? '✅' : '⬜️'} ${task.text}`,
-      `COMPLETE_${task.id}`
-    )
-  ]);
+  userTasks = sortTasks(userTasks);
+  const buttons = taskButtons(userTasks);
   if (userTasks.length === 0) {
     ctx.editMessageText('Nessuna task trovata.', mainMenu());
   } else {
     ctx.editMessageReplyMarkup(Markup.inlineKeyboard(buttons).reply_markup);
   }
+});
+
+// Gestione modifica task
+bot.action(/EDIT_(.+)/, (ctx) => {
+  const taskId = ctx.match[1];
+  const userId = ctx.from.id;
+  const userTasks = getTaskList(userId);
+  const task = userTasks.find(t => t.id === taskId);
+  if (!task) {
+    ctx.answerCbQuery('Task non trovata.');
+    return;
+  }
+  userStates[userId] = { state: 'EDITING_TASK', taskId };
+  replyAndTrack(ctx, `Invia il nuovo testo per la task: "${task.text}"\nOppure /annulla per annullare.`, mainMenuKeyboard());
+});
+
+// Gestione priorità
+bot.action(/PRIORITY_(.+)/, (ctx) => {
+  const taskId = ctx.match[1];
+  const userId = ctx.from.id;
+  togglePriority(userId, taskId);
+  ctx.answerCbQuery('Priorità aggiornata!');
+  // Refresh lista
+  let userTasks = getTaskList(userId);
+  userTasks = sortTasks(userTasks);
+  const buttons = taskButtons(userTasks);
+  if (ctx.update.callback_query.message.reply_markup.inline_keyboard.some(row => row.some(btn => btn.text === '➕ Nuova Task'))) {
+    buttons.push([
+      Markup.button.callback('➕ Nuova Task', 'CREATE_TASK'),
+      Markup.button.callback('🔙 Menu', 'BACK_TO_MENU')
+    ]);
+  }
+  ctx.editMessageReplyMarkup(Markup.inlineKeyboard(buttons).reply_markup);
 });
 
 bot.launch().catch((err) => {
@@ -192,3 +237,17 @@ bot.launch().catch((err) => {
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
+
+// Utility: genera i bottoni per la lista task (DRY)
+function taskButtons(userTasks) {
+  return userTasks.map(task => [
+    Markup.button.callback(`${task.priority ? '🌟' : '⭐'} ${task.completed ? '✅' : '⬜️'} ${task.text}`, `COMPLETE_${task.id}`),
+    Markup.button.callback('✏️', `EDIT_${task.id}`),
+    Markup.button.callback(task.priority ? '⬇️' : '⬆️', `PRIORITY_${task.id}`)
+  ]);
+}
+
+// Utility: ordina le task (prioritarie in alto)
+function sortTasks(tasks) {
+  return [...tasks].sort((a, b) => (b.priority ? 1 : 0) - (a.priority ? 1 : 0));
+}

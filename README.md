@@ -3,10 +3,9 @@
 A simple Telegram bot to manage daily tasks with inline and reply keyboard buttons. Built with [Telegraf](https://telegraf.js.org/) and ready for deployment on Railway.
 
 ## Features
-- Add tasks with a button or command
-- View your personal task list
-- Complete (and remove) tasks by clicking on them
-- Inline buttons for task actions
+- Add, view, complete, edit, and prioritize tasks
+- Inline buttons for complete (✅/⬜️), edit (✏️), and priority (⭐/🌟)
+- Prioritized tasks are always shown at the top of the list
 - Persistent reply keyboard for quick access
 - Automatic deletion of bot messages after 10 minutes (tasks remain until completed)
 
@@ -15,6 +14,8 @@ A simple Telegram bot to manage daily tasks with inline and reply keyboard butto
 - **➕ Crea Task**: Add a new task
 - **📋 Visualizza Lista**: View your current tasks
 - **Click on a task**: Mark as completed and remove from the list
+- **✏️**: Edit the text of a task
+- **⭐/🌟**: Mark/unmark a task as priority (priority tasks are shown first)
 - **/annulla**: Cancel current operation
 
 ## Deploy on Railway
