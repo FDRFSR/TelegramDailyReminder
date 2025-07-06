@@ -21,23 +21,41 @@ function mainMenu() {
   ]);
 }
 
+/**
+ * Main menu reply keyboard
+ * @returns {Markup.Markup}
+ */
 function mainMenuKeyboard() {
   return Markup.keyboard([
     ['➕ Crea Task', '📋 Visualizza Lista']
   ]).resize().oneTime(false);
 }
 
+/**
+ * Get the user's task list
+ * @param {number|string} userId
+ * @returns {Array}
+ */
 function getTaskList(userId) {
   return Array.isArray(tasks[userId]) ? tasks[userId] : [];
 }
 
+/**
+ * Add a new task for a user
+ * @param {number|string} userId
+ * @param {string} text
+ */
 function addTask(userId, text) {
   if (!Array.isArray(tasks[userId])) tasks[userId] = [];
   const id = Date.now().toString();
   tasks[userId].push({ id, text, completed: false, priority: false });
 }
 
-// Cambia priorità
+/**
+ * Toggle priority for a task
+ * @param {number|string} userId
+ * @param {string} taskId
+ */
 function togglePriority(userId, taskId) {
   const userTasks = getTaskList(userId);
   const task = userTasks.find(t => t.id === taskId);
@@ -50,71 +68,104 @@ function toggleTask(userId, taskId) {
   if (task) task.completed = !task.completed;
 }
 
-// Funzione per registrare i messaggi inviati (privati e gruppi)
-async function trackMessage(ctx, replyPromise) {
-  const userId = ctx.from.id;
-  const msg = await replyPromise;
-  if (!sentMessages[userId]) sentMessages[userId] = [];
-  // Salva anche i messaggi privati (chat type 'private')
-  sentMessages[userId].push({ id: msg.message_id, date: Date.now(), chatId: msg.chat.id, chatType: msg.chat.type });
+/**
+ * Utility: sort tasks (priority first)
+ * @param {Array} tasks
+ * @returns {Array}
+ */
+function sortTasks(tasks) {
+  return [...tasks].sort((a, b) => (b.priority ? 1 : 0) - (a.priority ? 1 : 0));
 }
 
-// Funzione per cancellare i messaggi vecchi di 10 minuti (privati e gruppi)
-async function cleanOldMessages() {
-  const now = Date.now();
-  const tenMinutes = 10 * 60 * 1000;
-  for (const userId in sentMessages) {
-    // Ottimizzazione: elimina direttamente se la lista è vuota
-    if (!sentMessages[userId] || sentMessages[userId].length === 0) {
-      delete sentMessages[userId];
-      continue;
-    }
-    const userMsgs = sentMessages[userId];
-    const toDelete = userMsgs.filter(m => now - m.date >= tenMinutes);
-    sentMessages[userId] = userMsgs.filter(m => now - m.date < tenMinutes);
-    for (const msg of toDelete) {
-      try {
-        await bot.telegram.deleteMessage(msg.chatId, msg.id);
-      } catch (e) {
-        // Log solo in debug
-        // console.debug('Errore cancellazione messaggio:', e.message);
-      }
-    }
-    // Se dopo la pulizia non ci sono più messaggi, elimina la chiave
-    if (sentMessages[userId].length === 0) {
-      delete sentMessages[userId];
-    }
+/**
+ * Utility: generate inline buttons for task list
+ * @param {Array} userTasks
+ * @returns {Array}
+ */
+function taskButtons(userTasks) {
+  return userTasks.map(task => [
+    Markup.button.callback(`${task.priority ? '🌟' : '⭐'} ${task.text}`, `COMPLETE_${task.id}`),
+    Markup.button.callback(task.priority ? '⬇️' : '⬆️', `PRIORITY_${task.id}`)
+  ]);
+}
+
+/**
+ * Track sent messages for later deletion
+ * @param {import('telegraf').Context} ctx
+ * @param {Promise} replyPromise
+ */
+async function trackMessage(ctx, replyPromise) {
+  try {
+    const userId = ctx.from.id;
+    const msg = await replyPromise;
+    if (!sentMessages[userId]) sentMessages[userId] = [];
+    sentMessages[userId].push({ id: msg.message_id, date: Date.now(), chatId: msg.chat.id, chatType: msg.chat.type });
+  } catch (e) {
+    console.error('Error tracking message:', e);
   }
 }
 
-// Avvia la pulizia automatica solo dei messaggi, non delle task
-setInterval(cleanOldMessages, 60 * 1000);
-
-// Modifica tutte le risposte ctx.reply per essere tracciate
+/**
+ * Consistent reply and track function
+ */
 function replyAndTrack(ctx, ...args) {
   return trackMessage(ctx, ctx.reply(...args));
 }
 
+/**
+ * Clean up old messages (opt: batch delete, memory cleanup)
+ */
+async function cleanOldMessages() {
+  const now = Date.now();
+  const tenMinutes = 10 * 60 * 1000;
+  for (const userId in sentMessages) {
+    if (!Array.isArray(sentMessages[userId]) || sentMessages[userId].length === 0) {
+      delete sentMessages[userId];
+      continue;
+    }
+    // Only keep messages < 10min old
+    const userMsgs = sentMessages[userId];
+    const toDelete = [];
+    let keep = [];
+    for (const m of userMsgs) {
+      if (now - m.date >= tenMinutes) toDelete.push(m);
+      else keep.push(m);
+    }
+    sentMessages[userId] = keep;
+    for (const msg of toDelete) {
+      try {
+        await bot.telegram.deleteMessage(msg.chatId, msg.id);
+      } catch (e) {
+        // Ignore errors (already deleted, etc.)
+      }
+    }
+    if (sentMessages[userId].length === 0) delete sentMessages[userId];
+  }
+}
+
+setInterval(cleanOldMessages, 60 * 1000);
+
+// --- BOT HANDLERS ---
+
 bot.start((ctx) => {
   userStates[ctx.from.id] = null;
-  ctx.reply('Benvenuto! Usa i tasti qui sotto per gestire le tue task:', mainMenuKeyboard());
+  replyAndTrack(ctx, 'Benvenuto! Usa i tasti qui sotto per gestire le tue task:', mainMenuKeyboard());
 });
 
-// Gestione tastiera personalizzata
 bot.hears('➕ Crea Task', (ctx) => {
   userStates[ctx.from.id] = 'AWAITING_TASK';
-  ctx.reply('Scrivi la task da aggiungere oppure /annulla per tornare al menu.', mainMenuKeyboard());
+  replyAndTrack(ctx, 'Scrivi la task da aggiungere oppure /annulla per tornare al menu.', mainMenuKeyboard());
 });
 
 bot.hears('📋 Visualizza Lista', (ctx) => {
   const userId = ctx.from.id;
   let userTasks = getTaskList(userId);
-  if (userTasks.length === 0) {
-    ctx.reply('Nessuna task trovata.', mainMenuKeyboard());
+  if (!Array.isArray(userTasks) || userTasks.length === 0) {
+    replyAndTrack(ctx, 'Nessuna task trovata.', mainMenuKeyboard());
     return;
   }
   userTasks = sortTasks(userTasks);
-  ctx.reply('Le tue task:', Markup.inlineKeyboard(taskButtons(userTasks)));
+  replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(taskButtons(userTasks)));
 });
 
 bot.action('CREATE_TASK', (ctx) => {
@@ -135,6 +186,10 @@ bot.on('text', (ctx) => {
     replyAndTrack(ctx, 'La task non può essere vuota. Riprova o usa /annulla.');
     return;
   }
+  if (text.length > 200) {
+    replyAndTrack(ctx, 'La task è troppo lunga (max 200 caratteri).');
+    return;
+  }
   addTask(ctx.from.id, text);
   userStates[ctx.from.id] = null;
   replyAndTrack(ctx, 'Task aggiunta!', mainMenu());
@@ -143,7 +198,7 @@ bot.on('text', (ctx) => {
 bot.action('SHOW_LIST', (ctx) => {
   const userId = ctx.from.id;
   let userTasks = getTaskList(userId);
-  if (userTasks.length === 0) {
+  if (!Array.isArray(userTasks) || userTasks.length === 0) {
     replyAndTrack(ctx, 'Nessuna task trovata.', mainMenu());
     return;
   }
@@ -160,30 +215,46 @@ bot.action('BACK_TO_MENU', (ctx) => {
   replyAndTrack(ctx, 'Tornato al menu principale.', mainMenu());
 });
 
-bot.action(/COMPLETE_(.+)/, (ctx) => {
+bot.action(/COMPLETE_(.+)/, async (ctx) => {
   const taskId = ctx.match[1];
   const userId = ctx.from.id;
   let userTasks = getTaskList(userId);
-  // Rimuovi la task completata
+  if (!Array.isArray(userTasks) || userTasks.length === 0) {
+    await replyAndTrack(ctx, 'Nessuna task trovata.', mainMenu());
+    return;
+  }
+  // Remove the completed task
   userTasks = userTasks.filter(task => task.id !== taskId);
   tasks[userId] = userTasks;
-  ctx.answerCbQuery('Task completata e rimossa!');
-  // Refresh list
+  try {
+    await ctx.answerCbQuery('Task completata e rimossa!');
+  } catch (e) {}
+  // Refresh list and handle empty case
   userTasks = sortTasks(userTasks);
-  const buttons = taskButtons(userTasks);
   if (userTasks.length === 0) {
-    ctx.editMessageText('Nessuna task trovata.', mainMenu());
+    try {
+      await ctx.editMessageText('Nessuna task trovata.', mainMenu());
+    } catch (e) {
+      // fallback: send new message if edit fails
+      replyAndTrack(ctx, 'Nessuna task trovata.', mainMenu());
+    }
   } else {
-    ctx.editMessageReplyMarkup(Markup.inlineKeyboard(buttons).reply_markup);
+    try {
+      await ctx.editMessageReplyMarkup(Markup.inlineKeyboard(taskButtons(userTasks)).reply_markup);
+    } catch (e) {
+      // fallback: send new message if edit fails
+      replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(taskButtons(userTasks)));
+    }
   }
 });
 
-// Gestione priorità
-bot.action(/PRIORITY_(.+)/, (ctx) => {
+bot.action(/PRIORITY_(.+)/, async (ctx) => {
   const taskId = ctx.match[1];
   const userId = ctx.from.id;
   togglePriority(userId, taskId);
-  ctx.answerCbQuery('Priorità aggiornata!');
+  try {
+    await ctx.answerCbQuery('Priorità aggiornata!');
+  } catch (e) {}
   // Refresh lista
   let userTasks = getTaskList(userId);
   userTasks = sortTasks(userTasks);
@@ -194,14 +265,20 @@ bot.action(/PRIORITY_(.+)/, (ctx) => {
       Markup.button.callback('🔙 Menu', 'BACK_TO_MENU')
     ]);
   }
-  ctx.editMessageReplyMarkup(Markup.inlineKeyboard(buttons).reply_markup);
+  try {
+    await ctx.editMessageReplyMarkup(Markup.inlineKeyboard(buttons).reply_markup);
+  } catch (e) {
+    replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(buttons));
+  }
 });
 
-// Reminder automatico ogni 30 minuti (escluso tra le 22 e le 08)
+/**
+ * Send reminders every 30 minutes except 22-08
+ */
 function sendReminders() {
   const now = new Date();
   const hour = now.getHours();
-  if (hour >= 22 || hour < 8) return; // Non inviare tra le 22 e le 08
+  if (hour >= 22 || hour < 8) return;
   for (const userId in tasks) {
     const userTasks = getTaskList(userId);
     if (userTasks.length > 0) {
@@ -210,29 +287,18 @@ function sendReminders() {
         '⏰ Reminder! Hai ancora queste task da completare:\n' +
           sortTasks(userTasks).map(t => `${t.priority ? '🌟' : '⭐'} ${t.text}`).join('\n'),
         mainMenuKeyboard()
-      ).catch(() => {}); // Ignora errori (es. utente ha bloccato il bot)
+      ).catch(() => {});
     }
   }
 }
 setInterval(sendReminders, 30 * 60 * 1000);
 
-bot.launch().catch((err) => {
+bot.launch().then(() => {
+  console.log('✅ Bot started and listening for updates!');
+}).catch((err) => {
   console.error('Errore durante l\'avvio del bot:', err);
   process.exit(1);
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
-
-// Utility: genera i bottoni per la lista task (DRY)
-function taskButtons(userTasks) {
-  return userTasks.map(task => [
-    Markup.button.callback(`${task.priority ? '🌟' : '⭐'} ${task.text}`, `COMPLETE_${task.id}`),
-    Markup.button.callback(task.priority ? '⬇️' : '⬆️', `PRIORITY_${task.id}`)
-  ]);
-}
-
-// Utility: ordina le task (prioritarie in alto)
-function sortTasks(tasks) {
-  return [...tasks].sort((a, b) => (b.priority ? 1 : 0) - (a.priority ? 1 : 0));
-}
