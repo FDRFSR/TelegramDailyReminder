@@ -21,6 +21,12 @@ function mainMenu() {
   ]);
 }
 
+function mainMenuKeyboard() {
+  return Markup.keyboard([
+    ['➕ Crea Task', '📋 Visualizza Lista']
+  ]).resize().oneTime(false);
+}
+
 function getTaskList(userId) {
   return Array.isArray(tasks[userId]) ? tasks[userId] : [];
 }
@@ -48,15 +54,16 @@ function cleanOldTasks() {
   }
 }
 
-// Funzione per registrare i messaggi inviati
+// Funzione per registrare i messaggi inviati (privati e gruppi)
 async function trackMessage(ctx, replyPromise) {
   const userId = ctx.from.id;
   const msg = await replyPromise;
   if (!sentMessages[userId]) sentMessages[userId] = [];
-  sentMessages[userId].push({ id: msg.message_id, date: Date.now(), chatId: msg.chat.id });
+  // Salva anche i messaggi privati (chat type 'private')
+  sentMessages[userId].push({ id: msg.message_id, date: Date.now(), chatId: msg.chat.id, chatType: msg.chat.type });
 }
 
-// Funzione per cancellare i messaggi vecchi di 10 minuti
+// Funzione per cancellare i messaggi vecchi di 10 minuti (privati e gruppi)
 async function cleanOldMessages() {
   const now = Date.now();
   const tenMinutes = 10 * 60 * 1000;
@@ -66,9 +73,10 @@ async function cleanOldMessages() {
     sentMessages[userId] = userMsgs.filter(m => now - m.date < tenMinutes);
     for (const msg of toDelete) {
       try {
+        // Forza la cancellazione anche nelle chat private
         await bot.telegram.deleteMessage(msg.chatId, msg.id);
       } catch (e) {
-        // Ignora errori se il messaggio è già stato cancellato
+        // Ignora errori se il messaggio è già stato cancellato o non permesso
       }
     }
   }
@@ -85,7 +93,30 @@ function replyAndTrack(ctx, ...args) {
 
 bot.start((ctx) => {
   userStates[ctx.from.id] = null;
-  replyAndTrack(ctx, 'Benvenuto! Usa i tasti qui sotto per gestire le tue task:', mainMenu());
+  ctx.reply('Benvenuto! Usa i tasti qui sotto per gestire le tue task:', mainMenuKeyboard());
+});
+
+// Gestione tastiera personalizzata
+bot.hears('➕ Crea Task', (ctx) => {
+  userStates[ctx.from.id] = 'AWAITING_TASK';
+  ctx.reply('Scrivi la task da aggiungere oppure /annulla per tornare al menu.', mainMenuKeyboard());
+});
+
+bot.hears('📋 Visualizza Lista', (ctx) => {
+  const userId = ctx.from.id;
+  const userTasks = getTaskList(userId);
+  if (userTasks.length === 0) {
+    ctx.reply('Nessuna task trovata.', mainMenuKeyboard());
+    return;
+  }
+  const buttons = userTasks.map(task => [
+    Markup.button.callback(
+      `${task.completed ? '✅' : '⬜️'} ${task.text}`,
+      `COMPLETE_${task.id}`
+    )
+  ]);
+  // Inline per completamento, tastiera per navigazione
+  ctx.reply('Le tue task:', Markup.inlineKeyboard(buttons));
 });
 
 bot.action('CREATE_TASK', (ctx) => {
