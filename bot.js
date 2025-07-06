@@ -123,7 +123,16 @@ bot.action('SHOW_LIST', (ctx) => {
       `COMPLETE_${task.id}`
     )
   ]);
+  // Aggiungi pulsanti per tornare al menu o aggiungere una nuova task
+  buttons.push([
+    Markup.button.callback('➕ Nuova Task', 'CREATE_TASK'),
+    Markup.button.callback('🔙 Menu', 'BACK_TO_MENU')
+  ]);
   replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(buttons));
+});
+
+bot.action('BACK_TO_MENU', (ctx) => {
+  replyAndTrack(ctx, 'Tornato al menu principale.', mainMenu());
 });
 
 bot.action(/COMPLETE_(.+)/, (ctx) => {
