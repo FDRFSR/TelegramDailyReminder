@@ -1,4 +1,5 @@
 const DataManager = require('./dataManager');
+const logger = require('../utils/logger');
 
 class TaskService {
   constructor() {
@@ -19,9 +20,9 @@ class TaskService {
           this.tasks[userId] = tasks;
         }
       }
-      console.log(`Loaded data for ${userIds.length} users`);
+      logger.info(`Loaded data for ${userIds.length} users`);
     } catch (error) {
-      console.error('Error loading user data:', error);
+      logger.error('Error loading user data', { error: error.message });
     }
   }
 
@@ -33,8 +34,9 @@ class TaskService {
     try {
       const tasks = this.getTaskList(userId);
       await this.dataManager.saveUserTasks(userId, tasks);
+      logger.debug('Tasks saved for user', { userId, taskCount: tasks.length });
     } catch (error) {
-      console.error(`Error saving tasks for user ${userId}:`, error);
+      logger.error('Error saving tasks for user', { error: error.message, userId });
     }
   }
 

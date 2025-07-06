@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const path = require('path');
+const logger = require('../utils/logger');
 
 /**
  * Simple file-based data persistence manager
@@ -17,7 +18,7 @@ class DataManager {
     try {
       await fs.mkdir(this.dataPath, { recursive: true });
     } catch (error) {
-      console.error('Error creating data directory:', error);
+      logger.error('Error creating data directory', { error: error.message, path: this.dataPath });
     }
   }
 
@@ -31,7 +32,7 @@ class DataManager {
       const filePath = path.join(this.dataPath, `${userId}.json`);
       await fs.writeFile(filePath, JSON.stringify(tasks, null, 2));
     } catch (error) {
-      console.error(`Error saving tasks for user ${userId}:`, error);
+      logger.error('Error saving tasks for user', { error: error.message, userId });
     }
   }
 
@@ -62,7 +63,7 @@ class DataManager {
         .filter(file => file.endsWith('.json'))
         .map(file => file.replace('.json', ''));
     } catch (error) {
-      console.error('Error reading user data files:', error);
+      logger.error('Error reading user data files', { error: error.message });
       return [];
     }
   }

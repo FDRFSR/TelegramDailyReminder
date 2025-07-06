@@ -4,9 +4,11 @@ require('dotenv').config();
 const constants = require('./config/constants');
 const TaskService = require('./services/taskService');
 const { validateTaskText, checkRateLimit } = require('./utils/validation');
+const logger = require('./utils/logger');
 const taskService = new TaskService();
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
+  logger.error("TELEGRAM_BOT_TOKEN environment variable is not set");
   console.error("Errore: la variabile d'ambiente TELEGRAM_BOT_TOKEN non è impostata.");
   process.exit(1);
 }
@@ -54,8 +56,8 @@ async function trackMessage(ctx, replyPromise) {
     const msg = await replyPromise;
     if (!sentMessages[userId]) sentMessages[userId] = [];
     sentMessages[userId].push({ id: msg.message_id, date: Date.now(), chatId: msg.chat.id, chatType: msg.chat.type });
-  } catch (e) {
-    console.error('Error tracking message:', e);
+  } catch (error) {
+    logger.error('Error tracking message', { error: error.message, userId: ctx.from?.id });
   }
 }
 
@@ -166,9 +168,10 @@ bot.on('text', async (ctx) => {
   try {
     await taskService.addTask(userId, text);
     userStates[userId] = null;
+    logger.info('Task added successfully', { userId, taskLength: text.length });
     replyAndTrack(ctx, '✅ Task aggiunta con successo! Continua così!', mainMenu());
   } catch (error) {
-    console.error('Error adding task:', error);
+    logger.error('Error adding task', { error: error.message, userId });
     replyAndTrack(ctx, '❌ Errore nel salvare la task. Riprova.');
   }
 });
@@ -212,7 +215,7 @@ bot.action(/COMPLETE_(.+)/, async (ctx) => {
       }
     }
   } catch (error) {
-    console.error('Error removing task:', error);
+    logger.error('Error removing task', { error: error.message, userId, taskId });
     await ctx.answerCbQuery('❌ Errore nell\'eliminare la task.');
   }
 });
@@ -241,7 +244,7 @@ bot.action(/PRIORITY_(.+)/, async (ctx) => {
       replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(buttons));
     }
   } catch (error) {
-    console.error('Error toggling priority:', error);
+    logger.error('Error toggling priority', { error: error.message, userId, taskId });
     await ctx.answerCbQuery('❌ Errore nel cambiare la priorità.');
   }
 });
@@ -330,8 +333,10 @@ function sendReminders() {
 setInterval(sendReminders, constants.REMINDER_INTERVAL);
 
 bot.launch().then(() => {
+  logger.info('Bot started successfully');
   console.log('✅ Bot started and listening for updates!');
 }).catch((err) => {
+  logger.error('Error starting bot', { error: err.message });
   console.error('Errore durante l\'avvio del bot:', err);
   process.exit(1);
 });
