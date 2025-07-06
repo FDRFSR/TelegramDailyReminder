@@ -4,7 +4,7 @@ A simple Telegram bot to manage daily tasks with inline and reply keyboard butto
 
 ## Features
 - Add, view, complete, and prioritize tasks
-- Inline buttons for complete (✅/⬜️) and priority (⭐/🌟)
+- Inline buttons for complete and priority (⭐/🌟)
 - Prioritized tasks are always shown at the top of the list
 - Persistent reply keyboard for quick access
 - Automatic deletion of bot messages after 10 minutes (tasks remain until completed)

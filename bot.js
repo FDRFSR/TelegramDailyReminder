@@ -208,7 +208,7 @@ process.once('SIGTERM', () => bot.stop('SIGTERM'));
 // Utility: genera i bottoni per la lista task (DRY)
 function taskButtons(userTasks) {
   return userTasks.map(task => [
-    Markup.button.callback(`${task.priority ? '🌟' : '⭐'} ${task.completed ? '✅' : '⬜️'} ${task.text}`, `COMPLETE_${task.id}`),
+    Markup.button.callback(`${task.priority ? '🌟' : '⭐'} ${task.text}`, `COMPLETE_${task.id}`),
     Markup.button.callback(task.priority ? '⬇️' : '⬆️', `PRIORITY_${task.id}`)
   ]);
 }
