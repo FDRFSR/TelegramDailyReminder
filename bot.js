@@ -223,6 +223,43 @@ bot.action(/PRIORITY_(.+)/, async (ctx) => {
   }
 });
 
+function truncateText(text, maxLength = 30) {
+  return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+}
+
+function taskButtons(userTasks) {
+  return userTasks.map(task => [
+    Markup.button.callback(`${task.priority ? '🌟' : '⭐'} ${truncateText(task.text)}`, `DELETE_CONFIRM_${task.id}`),
+    Markup.button.callback(task.priority ? '⬇️' : '⬆️', `PRIORITY_${task.id}`)
+  ]);
+}
+
+bot.action(/DELETE_CONFIRM_(.+)/, async (ctx) => {
+  const taskId = ctx.match[1];
+  const userId = ctx.from.id;
+  const userTasks = taskService.getTaskList(userId);
+  const task = userTasks.find(t => t.id === taskId);
+  if (!task) {
+    await ctx.answerCbQuery('Task non trovata.');
+    return;
+  }
+  await ctx.editMessageText(
+    `Sei sicuro di voler eliminare questa task?\n\n${truncateText(task.text, 50)}`,
+    Markup.inlineKeyboard([
+      [Markup.button.callback('✅ Sì', `COMPLETE_${taskId}`)],
+      [Markup.button.callback('❌ No', 'CANCEL_DELETE')]
+    ])
+  );
+});
+
+bot.action('CANCEL_DELETE', async (ctx) => {
+  // Refresh la lista task
+  const userId = ctx.from.id;
+  let userTasks = taskService.getTaskList(userId);
+  userTasks = sortTasks(userTasks);
+  await ctx.editMessageText('Le tue task:', Markup.inlineKeyboard(taskButtons(userTasks)));
+});
+
 /**
  * Send reminders every 30 minutes except 22-08
  */
