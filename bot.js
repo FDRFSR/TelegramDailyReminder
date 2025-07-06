@@ -102,19 +102,19 @@ setInterval(cleanOldMessages, constants.CLEANUP_INTERVAL);
 
 bot.start((ctx) => {
   userStates[ctx.from.id] = null;
-  replyAndTrack(ctx, 'Benvenuto! Usa i tasti qui sotto per gestire le tue task:', mainMenuKeyboard());
+  replyAndTrack(ctx, '👋 Benvenuto! Usa i tasti qui sotto per gestire le tue task. Buona produttività!', mainMenuKeyboard());
 });
 
 bot.hears('➕ Crea Task', (ctx) => {
   userStates[ctx.from.id] = 'AWAITING_TASK';
-  replyAndTrack(ctx, 'Scrivi la task da aggiungere oppure /annulla per tornare al menu.', mainMenuKeyboard());
+  replyAndTrack(ctx, '✍️ Scrivi la task da aggiungere oppure /annulla per tornare al menu.', mainMenuKeyboard());
 });
 
 bot.hears('📋 Visualizza Lista', (ctx) => {
   const userId = ctx.from.id;
   let userTasks = taskService.getTaskList(userId);
   if (!Array.isArray(userTasks) || userTasks.length === 0) {
-    replyAndTrack(ctx, 'Nessuna task trovata.', mainMenuKeyboard());
+    replyAndTrack(ctx, '🎉 Nessuna task attiva! Goditi il tuo tempo libero.', mainMenuKeyboard());
     return;
   }
   userTasks = sortTasks(userTasks);
@@ -128,7 +128,7 @@ bot.action('CREATE_TASK', (ctx) => {
 
 bot.hears(/\/annulla/i, (ctx) => {
   userStates[ctx.from.id] = null;
-  replyAndTrack(ctx, 'Operazione annullata.', mainMenu());
+  replyAndTrack(ctx, '❌ Operazione annullata. Sei tornato al menu principale.', mainMenu());
 });
 
 bot.on('text', (ctx) => {
@@ -136,23 +136,23 @@ bot.on('text', (ctx) => {
   if (userStates[userId] !== 'AWAITING_TASK') return;
   const text = ctx.message.text.trim();
   if (!text || text.startsWith('/')) {
-    replyAndTrack(ctx, 'La task non può essere vuota. Riprova o usa /annulla.');
+    replyAndTrack(ctx, '⚠️ La task non può essere vuota. Riprova o usa /annulla.');
     return;
   }
   if (text.length > constants.MAX_TASK_LENGTH) {
-    replyAndTrack(ctx, `La task è troppo lunga (max ${constants.MAX_TASK_LENGTH} caratteri).`);
+    replyAndTrack(ctx, `⚠️ La task è troppo lunga (max ${constants.MAX_TASK_LENGTH} caratteri).`);
     return;
   }
   taskService.addTask(ctx.from.id, text);
   userStates[ctx.from.id] = null;
-  replyAndTrack(ctx, 'Task aggiunta!', mainMenu());
+  replyAndTrack(ctx, '✅ Task aggiunta con successo! Continua così!', mainMenu());
 });
 
 bot.action('SHOW_LIST', (ctx) => {
   const userId = ctx.from.id;
   let userTasks = taskService.getTaskList(userId);
   if (!Array.isArray(userTasks) || userTasks.length === 0) {
-    replyAndTrack(ctx, 'Nessuna task trovata.', mainMenu());
+    replyAndTrack(ctx, '🎉 Nessuna task attiva! Goditi il tuo tempo libero.', mainMenu());
     return;
   }
   userTasks = sortTasks(userTasks);
@@ -165,7 +165,7 @@ bot.action('SHOW_LIST', (ctx) => {
 });
 
 bot.action('BACK_TO_MENU', (ctx) => {
-  replyAndTrack(ctx, 'Tornato al menu principale.', mainMenu());
+  replyAndTrack(ctx, '🔙 Tornato al menu principale.', mainMenu());
 });
 
 bot.action(/COMPLETE_(.+)/, async (ctx) => {
@@ -173,22 +173,22 @@ bot.action(/COMPLETE_(.+)/, async (ctx) => {
   const userId = ctx.from.id;
   let userTasks = taskService.getTaskList(userId);
   if (!Array.isArray(userTasks) || userTasks.length === 0) {
-    await replyAndTrack(ctx, 'Nessuna task trovata.', mainMenu());
+    await replyAndTrack(ctx, '🎉 Nessuna task attiva! Goditi il tuo tempo libero.', mainMenu());
     return;
   }
   // Remove the completed task
   taskService.removeTask(userId, taskId);
   userTasks = taskService.getTaskList(userId);
   try {
-    await ctx.answerCbQuery('Task completata e rimossa!');
+    await ctx.answerCbQuery('🗑️ Task eliminata! Una in meno da fare.');
   } catch (e) {}
   // Refresh list and handle empty case
   userTasks = sortTasks(userTasks);
   if (userTasks.length === 0) {
     try {
-      await ctx.editMessageText('Nessuna task trovata.', mainMenu());
+      await ctx.editMessageText('🎉 Nessuna task attiva! Goditi il tuo tempo libero.', mainMenu());
     } catch (e) {
-      replyAndTrack(ctx, 'Nessuna task trovata.', mainMenu());
+      replyAndTrack(ctx, '🎉 Nessuna task attiva! Goditi il tuo tempo libero.', mainMenu());
     }
   } else {
     try {
@@ -204,7 +204,7 @@ bot.action(/PRIORITY_(.+)/, async (ctx) => {
   const userId = ctx.from.id;
   taskService.togglePriority(userId, taskId);
   try {
-    await ctx.answerCbQuery('Priorità aggiornata!');
+    await ctx.answerCbQuery('🌟 Task marcata come prioritaria!');
   } catch (e) {}
   // Refresh lista
   let userTasks = taskService.getTaskList(userId);
