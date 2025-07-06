@@ -79,17 +79,24 @@ bot.action('SHOW_LIST', (ctx) => {
 
 bot.action(/COMPLETE_(.+)/, (ctx) => {
   const taskId = ctx.match[1];
-  toggleTask(ctx.from.id, taskId);
-  ctx.answerCbQuery('Task aggiornata!');
+  const userId = ctx.from.id;
+  let userTasks = getTaskList(userId);
+  // Rimuovi la task completata
+  userTasks = userTasks.filter(task => task.id !== taskId);
+  tasks[userId] = userTasks;
+  ctx.answerCbQuery('Task completata e rimossa!');
   // Refresh list
-  const userTasks = getTaskList(ctx.from.id);
   const buttons = userTasks.map(task => [
     Markup.button.callback(
       `${task.completed ? '✅' : '⬜️'} ${task.text}`,
       `COMPLETE_${task.id}`
     )
   ]);
-  ctx.editMessageReplyMarkup(Markup.inlineKeyboard(buttons).reply_markup);
+  if (userTasks.length === 0) {
+    ctx.editMessageText('Nessuna task trovata.', mainMenu());
+  } else {
+    ctx.editMessageReplyMarkup(Markup.inlineKeyboard(buttons).reply_markup);
+  }
 });
 
 bot.launch().catch((err) => {
