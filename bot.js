@@ -3,9 +3,12 @@ const { Telegraf, Markup } = require('telegraf');
 require('dotenv').config();
 const constants = require('./config/constants');
 const TaskService = require('./services/taskService');
+const { validateTaskText, checkRateLimit } = require('./utils/validation');
+const logger = require('./utils/logger');
 const taskService = new TaskService();
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
+  logger.error("TELEGRAM_BOT_TOKEN environment variable is not set");
   console.error("Errore: la variabile d'ambiente TELEGRAM_BOT_TOKEN non è impostata.");
   process.exit(1);
 }
@@ -39,7 +42,7 @@ function mainMenuKeyboard() {
  * @returns {Array}
  */
 function getTaskList(userId) {
-  return Array.isArray(tasks[userId]) ? tasks[userId] : [];
+  return taskService.getTaskList(userId);
 }
 
 /**
@@ -53,8 +56,8 @@ async function trackMessage(ctx, replyPromise) {
     const msg = await replyPromise;
     if (!sentMessages[userId]) sentMessages[userId] = [];
     sentMessages[userId].push({ id: msg.message_id, date: Date.now(), chatId: msg.chat.id, chatType: msg.chat.type });
-  } catch (e) {
-    console.error('Error tracking message:', e);
+  } catch (error) {
+    logger.error('Error tracking message', { error: error.message, userId: ctx.from?.id });
   }
 }
 
@@ -94,6 +97,16 @@ async function cleanOldMessages() {
     }
     if (sentMessages[userId].length === 0) delete sentMessages[userId];
   }
+  
+  // Clean up inactive user states (older than 1 hour)
+  const oneHour = 60 * 60 * 1000;
+  for (const userId in userStates) {
+    if (userStates[userId] && typeof userStates[userId] === 'object' && userStates[userId].timestamp) {
+      if (now - userStates[userId].timestamp > oneHour) {
+        delete userStates[userId];
+      }
+    }
+  }
 }
 
 setInterval(cleanOldMessages, constants.CLEANUP_INTERVAL);
@@ -106,11 +119,17 @@ bot.start((ctx) => {
 });
 
 bot.hears('➕ Crea Task', (ctx) => {
+  if (!checkRateLimit(ctx.from.id, 'general')) {
+    return replyAndTrack(ctx, '⏰ Stai andando troppo veloce! Aspetta un momento.');
+  }
   userStates[ctx.from.id] = 'AWAITING_TASK';
   replyAndTrack(ctx, '✍️ Scrivi la task da aggiungere oppure /annulla per tornare al menu.', mainMenuKeyboard());
 });
 
 bot.hears('📋 Visualizza Lista', (ctx) => {
+  if (!checkRateLimit(ctx.from.id, 'general')) {
+    return replyAndTrack(ctx, '⏰ Stai andando troppo veloce! Aspetta un momento.');
+  }
   showTaskList(ctx, { withMenuButtons: true, useReply: true });
 });
 
@@ -124,21 +143,37 @@ bot.hears(/\/annulla/i, (ctx) => {
   replyAndTrack(ctx, '❌ Operazione annullata. Sei tornato al menu principale.', mainMenu());
 });
 
-bot.on('text', (ctx) => {
+bot.on('text', async (ctx) => {
   const userId = ctx.from.id;
+  
+  // Rate limiting check
+  if (!checkRateLimit(userId, 'add_task')) {
+    return replyAndTrack(ctx, '⏰ Stai andando troppo veloce! Aspetta un momento prima di aggiungere altre task.');
+  }
+  
   if (userStates[userId] !== 'AWAITING_TASK') return;
+  
   const text = ctx.message.text.trim();
-  if (!text || text.startsWith('/')) {
-    replyAndTrack(ctx, '⚠️ La task non può essere vuota. Riprova o usa /annulla.');
-    return;
+  
+  // Enhanced validation
+  const validation = validateTaskText(text);
+  if (!validation.isValid) {
+    return replyAndTrack(ctx, `⚠️ ${validation.error} Riprova o usa /annulla.`);
   }
-  if (text.length > constants.MAX_TASK_LENGTH) {
-    replyAndTrack(ctx, `⚠️ La task è troppo lunga (max ${constants.MAX_TASK_LENGTH} caratteri).`);
-    return;
+  
+  if (text.startsWith('/')) {
+    return replyAndTrack(ctx, '⚠️ La task non può essere un comando. Riprova o usa /annulla.');
   }
-  taskService.addTask(ctx.from.id, text);
-  userStates[ctx.from.id] = null;
-  replyAndTrack(ctx, '✅ Task aggiunta con successo! Continua così!', mainMenu());
+  
+  try {
+    await taskService.addTask(userId, text);
+    userStates[userId] = null;
+    logger.info('Task added successfully', { userId, taskLength: text.length });
+    replyAndTrack(ctx, '✅ Task aggiunta con successo! Continua così!', mainMenu());
+  } catch (error) {
+    logger.error('Error adding task', { error: error.message, userId });
+    replyAndTrack(ctx, '❌ Errore nel salvare la task. Riprova.');
+  }
 });
 
 bot.action('SHOW_LIST', (ctx) => {
@@ -158,49 +193,59 @@ bot.action(/COMPLETE_(.+)/, async (ctx) => {
     return;
   }
   // Remove the completed task
-  taskService.removeTask(userId, taskId);
-  userTasks = taskService.getTaskList(userId);
   try {
-    await ctx.answerCbQuery('🗑️ Task eliminata! Una in meno da fare.');
-  } catch (e) {}
-  // Refresh list and handle empty case
-  userTasks = sortTasks(userTasks);
-  if (userTasks.length === 0) {
+    await taskService.removeTask(userId, taskId);
+    userTasks = taskService.getTaskList(userId);
     try {
-      await ctx.editMessageText('🎉 Nessuna task attiva! Goditi il tuo tempo libero.', mainMenu());
-    } catch (e) {
-      replyAndTrack(ctx, '🎉 Nessuna task attiva! Goditi il tuo tempo libero.', mainMenu());
+      await ctx.answerCbQuery('🗑️ Task eliminata! Una in meno da fare.');
+    } catch (e) {}
+    // Refresh list and handle empty case
+    userTasks = sortTasks(userTasks);
+    if (userTasks.length === 0) {
+      try {
+        await ctx.editMessageText('🎉 Nessuna task attiva! Goditi il tuo tempo libero.', mainMenu());
+      } catch (e) {
+        replyAndTrack(ctx, '🎉 Nessuna task attiva! Goditi il tuo tempo libero.', mainMenu());
+      }
+    } else {
+      try {
+        await ctx.editMessageReplyMarkup(Markup.inlineKeyboard(taskButtons(userTasks)).reply_markup);
+      } catch (e) {
+        replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(taskButtons(userTasks)));
+      }
     }
-  } else {
-    try {
-      await ctx.editMessageReplyMarkup(Markup.inlineKeyboard(taskButtons(userTasks)).reply_markup);
-    } catch (e) {
-      replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(taskButtons(userTasks)));
-    }
+  } catch (error) {
+    logger.error('Error removing task', { error: error.message, userId, taskId });
+    await ctx.answerCbQuery('❌ Errore nell\'eliminare la task.');
   }
 });
 
 bot.action(/PRIORITY_(.+)/, async (ctx) => {
   const taskId = ctx.match[1];
   const userId = ctx.from.id;
-  taskService.togglePriority(userId, taskId);
   try {
-    await ctx.answerCbQuery('🌟 Task marcata come prioritaria!');
-  } catch (e) {}
-  // Refresh lista
-  let userTasks = taskService.getTaskList(userId);
-  userTasks = sortTasks(userTasks);
-  const buttons = taskButtons(userTasks);
-  if (ctx.update.callback_query.message.reply_markup.inline_keyboard.some(row => row.some(btn => btn.text === '➕ Nuova Task'))) {
-    buttons.push([
-      Markup.button.callback('➕ Nuova Task', 'CREATE_TASK'),
-      Markup.button.callback('🔙 Menu', 'BACK_TO_MENU')
-    ]);
-  }
-  try {
-    await ctx.editMessageReplyMarkup(Markup.inlineKeyboard(buttons).reply_markup);
-  } catch (e) {
-    replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(buttons));
+    await taskService.togglePriority(userId, taskId);
+    try {
+      await ctx.answerCbQuery('🌟 Task marcata come prioritaria!');
+    } catch (e) {}
+    // Refresh lista
+    let userTasks = taskService.getTaskList(userId);
+    userTasks = sortTasks(userTasks);
+    const buttons = taskButtons(userTasks);
+    if (ctx.update.callback_query.message.reply_markup.inline_keyboard.some(row => row.some(btn => btn.text === '➕ Nuova Task'))) {
+      buttons.push([
+        Markup.button.callback('➕ Nuova Task', 'CREATE_TASK'),
+        Markup.button.callback('🔙 Menu', 'BACK_TO_MENU')
+      ]);
+    }
+    try {
+      await ctx.editMessageReplyMarkup(Markup.inlineKeyboard(buttons).reply_markup);
+    } catch (e) {
+      replyAndTrack(ctx, 'Le tue task:', Markup.inlineKeyboard(buttons));
+    }
+  } catch (error) {
+    logger.error('Error toggling priority', { error: error.message, userId, taskId });
+    await ctx.answerCbQuery('❌ Errore nel cambiare la priorità.');
   }
 });
 
@@ -288,8 +333,10 @@ function sendReminders() {
 setInterval(sendReminders, constants.REMINDER_INTERVAL);
 
 bot.launch().then(() => {
+  logger.info('Bot started successfully');
   console.log('✅ Bot started and listening for updates!');
 }).catch((err) => {
+  logger.error('Error starting bot', { error: err.message });
   console.error('Errore durante l\'avvio del bot:', err);
   process.exit(1);
 });

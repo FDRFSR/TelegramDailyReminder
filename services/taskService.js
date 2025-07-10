@@ -1,6 +1,43 @@
+const DataManager = require('./dataManager');
+const logger = require('../utils/logger');
+
 class TaskService {
   constructor() {
     this.tasks = Object.create(null);
+    this.dataManager = new DataManager();
+    this.loadAllUserData();
+  }
+
+  /**
+   * Load all user data from persistent storage
+   */
+  async loadAllUserData() {
+    try {
+      const userIds = await this.dataManager.getAllUserIds();
+      for (const userId of userIds) {
+        const tasks = await this.dataManager.loadUserTasks(userId);
+        if (Array.isArray(tasks) && tasks.length > 0) {
+          this.tasks[userId] = tasks;
+        }
+      }
+      logger.info(`Loaded data for ${userIds.length} users`);
+    } catch (error) {
+      logger.error('Error loading user data', { error: error.message });
+    }
+  }
+
+  /**
+   * Save user tasks to persistent storage
+   * @param {number|string} userId
+   */
+  async saveUserTasks(userId) {
+    try {
+      const tasks = this.getTaskList(userId);
+      await this.dataManager.saveUserTasks(userId, tasks);
+      logger.debug('Tasks saved for user', { userId, taskCount: tasks.length });
+    } catch (error) {
+      logger.error('Error saving tasks for user', { error: error.message, userId });
+    }
   }
 
   /**
@@ -8,10 +45,11 @@ class TaskService {
    * @param {number|string} userId
    * @param {string} text
    */
-  addTask(userId, text) {
+  async addTask(userId, text) {
     if (!Array.isArray(this.tasks[userId])) this.tasks[userId] = [];
     const id = Date.now().toString();
     this.tasks[userId].push({ id, text, completed: false, priority: false });
+    await this.saveUserTasks(userId);
   }
 
   /**
@@ -28,10 +66,13 @@ class TaskService {
    * @param {number|string} userId
    * @param {string} taskId
    */
-  togglePriority(userId, taskId) {
+  async togglePriority(userId, taskId) {
     const userTasks = this.getTaskList(userId);
     const task = userTasks.find(t => t.id === taskId);
-    if (task) task.priority = !task.priority;
+    if (task) {
+      task.priority = !task.priority;
+      await this.saveUserTasks(userId);
+    }
   }
 
   /**
@@ -39,10 +80,11 @@ class TaskService {
    * @param {number|string} userId
    * @param {string} taskId
    */
-  removeTask(userId, taskId) {
+  async removeTask(userId, taskId) {
     let userTasks = this.getTaskList(userId);
     userTasks = userTasks.filter(task => task.id !== taskId);
     this.tasks[userId] = userTasks;
+    await this.saveUserTasks(userId);
   }
 }
 
